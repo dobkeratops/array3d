@@ -1,0 +1,11 @@
+[package]
+name = "array3d"
+version = "0.1.0"
+authors = ["dobkeratops <dobkeratopsgit@gmail.com>"]
+description = "3d array with internal iterators and various helper functions, uses an vec3-of-ints index type as a stylistic choice (.x .y .z for components is clearer alongside [] for array access. "
+
+license = "MIT"
+repository = "https://github.com/dobkeratops/array3d"
+
+[dependencies]
+lininterp = "0.1.0"
