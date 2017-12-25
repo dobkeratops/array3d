@@ -4,6 +4,7 @@
 #![allow(unused_variables)]
 #![allow(dead_code)]
 #![feature(slice_get_slice)]
+#![feature(associated_type_defaults)]
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -47,6 +48,24 @@ mod tests {
 		let out:Vec<_>= foo.iter_cells().collect();
 		let cmp=vec![(v3i(0,0,0),&000),(v3i(1,0,0),&100),(v3i(0,1,0),&010),(v3i(1,1,0),&110)];
 		assert_eq!(out,cmp);
+	}
+
+	#[test]
+	fn axis_fold(){
+		let ar=Array3d::from_fn(v3i(2,2,2), |pos|pos.x*200+pos.y*30+pos.z*4);
+		assert_eq!(ar.linear_index(v3i(1,1,1)),1+1*2+1*2*2);
+		assert_eq!(ar[v3i(0,0,0)],000);
+		assert_eq!(ar[v3i(1,0,0)],200);
+		assert_eq!(ar[v3i(1,0,1)],204);
+		assert_eq!(ar[v3i(0,0,1)],004);
+		assert_eq!(ar[v3i(0,1,0)],030);
+		assert_eq!(ar[v3i(0,1,1)],034);
+		assert_eq!(ar[v3i(1,1,0)],230);
+		assert_eq!(ar[v3i(1,1,1)],234);
+		let ar2=ar.fold_z(0,|pos,a,b|a+b);
+		assert_eq!(ar2[v2i(1,1)],464); // 230+234
+		let ar3=ar.fold_x(0,|pos,a,b|a+b);
+		assert_eq!(ar3[v2i(1,1)],268); // 034+234
 	}
 
 }
@@ -93,6 +112,7 @@ impl<T:Copy> GetMut<i32> for Vec3<T>{
 		}		
 	}
 }
+
 const XAxis:Axis_t=0; const YAxis:Axis_t=1; const ZAxis:Axis_t=2;
 /*
 impl<T> Index<i32> for Vec3<T>{
@@ -152,98 +172,17 @@ fn eval_linear_index(pos:V3i, stride:V3i)->usize{
 	(pos.x as usize)*(stride.x as usize)+(pos.y as usize) * (stride.y as usize) + (pos.z as usize)*(stride.z as usize)
 }
 
-// slice of 3d array, independantly addressable/iterable.
-// want this especially for use of rust [..] syntax
-// and for block-copy interfaces.
-
-pub struct Array3dSlice<'a, T:'a>{
-	linear_data:&'a [T],
-	li_stride:V3i,			// multiply by xyz to give linear data offset
-	start:V3i,end:V3i	// window *within* given linear data.
-}
-pub struct Array3dSliceMut<'a, T:'a>{
-	linear_data:&'a mut [T],
-	li_stride:V3i,			// multiply by xyz to give linear data offset
-	start:V3i,end:V3i	// window *within* given linear data.
-}
-
-impl<'a, T:Clone+'a> Array3dSliceMut<'a,T>{
-//	fn index_size(&'a self)->V3i{self.end-self.start}
-	fn set<'c>(&'a mut self, src:&'c Array3dSlice<T>){
-		assert!(self.index_size()==src.index_size());
-		for (pos,lin_index) in IterXYZ::new(self.start,self.end, self.linear_index(self.start),self.li_stride){
-			self[pos]=src[v3isub(pos,self.start)].clone();
-		}
-	}
-/*
-	fn iter_cells(&'a self)->IterXYZIn<Self>{
-		unimplemented!()
-	}
-	fn iter_cells_mut(&'a mut self)->IterXYZInMut<Self>{
-		unimplemented!()
-	}
-*/
-}
 
 /// utility trait: types which can convert XYZ<->linear indices
-pub trait XYZLinearIndexable{
+pub trait XYZIndexable : IndexMut<V3i>{
 	fn index_size(&self)->V3i;
+}
+pub trait XYZLinearIndexable : XYZIndexable{
 	fn linear_index(&self,pos:V3i)->LinearIndex;
 	fn pos_from_linear_index(&self,LinearIndex)->V3i;	
 }
 
 
-impl<'a,T:Clone+'a> IterXYZAble<'a> for Array3dSlice<'a,T>{
-	type Elem=T;
-	fn at_linear_index(&'a self,i:LinearIndex)->&'a Self::Elem{&self.linear_data[i]}
-}
-impl<'a,T:Clone+'a> IterXYZAble<'a> for Array3dSliceMut<'a,T>{
-	type Elem=T;
-	fn at_linear_index(&'a self,i:LinearIndex)->&'a Self::Elem{&self.linear_data[i]}
-}
-
-impl<'a,T:Clone+'a> IterXYZAbleMut<'a> for Array3dSliceMut<'a,T>{
-	fn at_linear_index_mut(&'a mut self,i:LinearIndex)->&'a mut Self::Elem{self.linear_data.index_mut(i)}
-}
-
-impl<'a,T:Clone+'a> XYZLinearIndexable for Array3dSlice<'a,T>{
-	fn index_size(&self)->V3i{v3isub(self.end,self.start)}
-	fn linear_index(&self,pos:V3i)->LinearIndex{ v3i_hadd_usize(v3imul(v3iadd(self.start,pos),self.li_stride))  }
-	fn pos_from_linear_index(&self,i:LinearIndex)->V3i{
-		let (rest,x)=div_rem(i,self.li_stride.x as usize);
-		let (rest,y)=div_rem(rest,self.li_stride.y as usize);
-		let (rest,z)=div_rem(rest,self.li_stride.z as usize);
-		v3i(x as i32,y as i32,z as i32)
-	}
-}
-impl<'a,T:Clone+'a> XYZLinearIndexable for Array3dSliceMut<'a,T>{
-	fn index_size(&self)->V3i{v3isub(self.end,self.start)}
-	fn linear_index(&self,pos:V3i)->LinearIndex{ v3i_hadd_usize(v3imul(v3iadd(self.start,pos),self.li_stride))  }
-	fn pos_from_linear_index(&self,i:LinearIndex)->V3i{
-		let (rest,x)=div_rem(i,self.li_stride.x as usize);
-		let (rest,y)=div_rem(rest,self.li_stride.y as usize);
-		let (rest,z)=div_rem(rest,self.li_stride.z as usize);
-		v3i(x as i32,y as i32,z as i32)
-	}
-}
-
-impl<'t,T:Clone> Index<V3i> for Array3dSlice<'t,T>{
-	type Output=T;
-	fn index(&self,pos:V3i)->&T{
-		&self.linear_data[eval_linear_index(pos,self.li_stride)]
-	}
-}
-impl<'t,T:Clone> Index<V3i> for Array3dSliceMut<'t,T>{
-	type Output=T;
-	fn index(&self,pos:V3i)->&T{
-		&self.linear_data[eval_linear_index(pos,self.li_stride)]
-	}
-}
-impl<'a,T:Clone> IndexMut<V3i> for Array3dSliceMut<'a,T>{
-	fn index_mut(&mut self,pos:V3i)->&mut T{
-		&mut self.linear_data[eval_linear_index(pos,self.li_stride)]
-	}
-}
 
 /*TODO , what is rust assignment operator?
 impl<'a,'b,'c, T:Clone> Assign<Array3dSlice<'a,T>> for Array3dSlice<'b,T>{
@@ -373,6 +312,7 @@ impl<'a,I,TS:'a+IndexMut<I>> IndexMut<I> for RangeOfMut<'a,I,TS> {
 	}
 }
 
+
 impl IterXYZ{
 	fn new(start:V3i, end:V3i, base_index:usize , index_stride:V3i)->IterXYZ
 	{
@@ -460,6 +400,15 @@ impl<T:Clone> Array3d<T>{
 	fn range<'a>(&'a self, rng:Range<V3i>)->RangeOf<'a,V3i,Self>{
 		RangeOf(rng,self)		
 	}
+
+	/// keep the same underlying sequential buffer memory,but re-interpret as a different array shape
+	fn reshape(&mut self, s:V3i){
+		// todo: do allow truncations etc
+		// todo: reshape to 2d, 3d
+		assert!(v3i_hmul_usize(self.shape)==v3i_hmul_usize(s));
+		self.shape=s;
+	}
+
 }
 
 /// struct holding iteration info for a 3d array
@@ -498,14 +447,17 @@ impl<T:Clone> Array3d<T>{// TODO is there an 'iterable' trait?
 	fn linear_stride(&self)->V3i{v3i(1,self.shape.x,self.shape.x*self.shape.y)}
 }
 
-impl<T> XYZLinearIndexable for Array3d<T>{
+impl<T> XYZIndexable for Array3d<T>{
 	fn index_size(&self)->V3i{self.shape}
+}
+impl<T> XYZLinearIndexable for Array3d<T>{
 	fn linear_index(&self, pos:V3i)->LinearIndex{
+		let shape=self.index_size();
 		// now this *could* exceed 2gb.
 		(pos.x as usize)+
-		(self.shape.x as usize)*( 
+		(shape.x as usize)*( 
 			(pos.y as usize)+
-			(pos.z as usize)*(self.shape.y as usize)
+			(pos.z as usize)*(shape.y as usize)
 		)
 	}
 	fn pos_from_linear_index(&self,i:LinearIndex)->V3i{
@@ -522,13 +474,14 @@ impl<'a,T:Clone> IterXYZAbleMut<'a> for Array3d<T>{
 	fn at_linear_index_mut(&'a mut self,i:LinearIndex)->&'a mut T{ self.data.index_mut(i)}
 }
 
-impl<T:Clone> Array3d<T>{	
+impl<T:Clone> Array3d<T>{
+	
 	pub fn from_fn<F:Fn(V3i)->T> (s:V3i,f:F) -> Array3d<T> {
 		let mut a=Array3d{shape:s, data:Vec::new()};
 		a.data.reserve(v3i_hmul_usize(s));
 		for z in 0..a.shape.z{ for y in 0..a.shape.y { for x in 0.. a.shape.x{
 			a.data.push( f(v3i(x,y,z)) )
-		}}}		
+		}}}
 		a
 	}
 
@@ -557,9 +510,50 @@ impl<T:Clone> Array3d<T>{
 	pub fn from_val(size:V3i,val:&T)->Self{Self::fill_val(size,val)}
 
 	pub fn len(&self)->usize{ v3i_hmul_usize(self.shape) }
-	/// produce a new array3d by applying a function to every element
+}
 
-	pub fn map_strided_region<B:Clone,F:Fn(V3i,&T)->B> 
+impl<TS:XYZIndexable> XYZInternalIterators for TS{}
+
+macro_rules! fold_axis{(fn $fname:ident traverse ($u:ident,$v:ident) reduce $w:ident )=>{
+	/// produce a 2d array by folding along the X axis
+	fn $fname<B:Clone,F:Fn(V3i,B,&Self::Output)->B> (&self,input:B, f:F) -> Array2d<B>{
+		let mut out=Array2d::new();
+		let shape=self.index_size();
+		out.data.reserve(shape.$u as usize *shape.$v as usize);
+		let mut pos=v3i(0,0,0);//yuk. for macro
+		pos.$v=0;
+		for $v in 0..shape.$v {
+			pos.$u=0;
+			for $u in 0.. shape.$u{
+				let mut acc=input.clone();
+				pos.$w=0;
+				for $w in 0..shape.$w{
+//					let pos=v3i(x,y,z);
+					acc=f(pos,acc, self.index(pos));
+					pos.$w += 1;
+				}
+				out.data.push(acc);
+				pos.$u+=1;
+			}
+			pos.$v+=1;
+		}		
+		out.shape=v2i(shape.$u, shape.$v);
+		out		
+	}
+}}
+
+
+/// internal iterators
+/// until rust has HKT/ATOC, options for output are limited,
+/// we keep flat Array3d as the default output
+/// Default implementations just built on indexing, however addressgen would
+/// be inefficient this way
+/// implementation for specific arrangements could implement certain
+/// traversals more efficiently (be it flat, morton order, whatever)
+pub trait XYZInternalIterators : XYZIndexable{
+	type T=Self::Output;
+
+	fn map_strided_region<B:Clone,F:Fn(V3i,&Self::Output)->B> 
 		(&self,range:Range<V3i>,stride:V3i, f:F) -> Array3d<B>
 	{
 		Array3d::from_fn(v3idiv(v3isub(range.end,range.start),stride),
@@ -571,13 +565,16 @@ impl<T:Clone> Array3d<T>{
 	}
 
 	/// internal iteration with inplace mutation
-	pub fn map_xyz<B:Clone,F:Fn(V3i,&T)->B> (&self,f:F) -> Array3d<B>{
-		Array3d::from_fn(self.shape,
+	fn map_xyz<B:Clone,F:Fn(V3i,&Self::Output)->B> (&self,f:F) -> Array3d<B>{
+		Array3d::from_fn(self.index_size(),
 			|pos:V3i|f(pos,self.index(pos))
 		)
 	}
-	pub fn for_each<F:Fn(V3i,&mut T)> (&mut self,f:F){
-		for z in 0..self.shape.z{ for y in 0..self.shape.y { for x in 0.. self.shape.x{
+	fn for_each<F>(&mut self,f:F) 
+		where F:Fn(V3i,&mut Self::Output)
+	{
+		let shape=self.index_size();
+		for z in 0..shape.z{ for y in 0..shape.y { for x in 0.. shape.x{
 			let pos=v3i(x,y,z);
 			f(pos,self.index_mut(pos))
 		}}}
@@ -586,50 +583,50 @@ impl<T:Clone> Array3d<T>{
 	// mappers along each pair of axes,
 	// form primitive for reducers along the axes
 	// or slice extraction
-	pub fn map_xy<F,B>(&self, a_func:F)->Array2d<B>
+	fn map_xy<F,B>(&self, a_func:F)->Array2d<B>
 		where F:Fn(&Self,i32,i32)->B, B:Clone
 	{
-		Array2d::from_fn(v3i_xy(self.shape),
+		let sz=self.index_size();
+		Array2d::from_fn(v2i(sz.x,sz.z),
 			|pos:V2i|{a_func(self,pos.x,pos.y)}
 		)		
 	}
-	pub fn map_xz<F,B>(&self, a_func:F)->Array2d<B>
+	fn map_xz<F,B>(&self, a_func:F)->Array2d<B>
 		where F:Fn(&Self,i32,i32)->B, B:Clone
 	{
-		Array2d::from_fn(v3i_xz(self.shape),
+		let sz=self.index_size();
+		Array2d::from_fn(v2i(sz.x,sz.z),
 			|pos:V2i|{a_func(self,pos.x,pos.y)}
 		)		
 	}
-	pub fn map_yz<F,B>(&self, a_func:F)->Array2d<B>
+	fn map_yz<F,B>(&self, a_func:F)->Array2d<B>
 		where F:Fn(&Self,i32,i32)->B, B:Clone
 	{
-		Array2d::from_fn(v3i_yz(self.shape),
+		let sz=self.index_size();
+		Array2d::from_fn(v2i(sz.y, sz.z),
 			|pos:V2i|{a_func(self,pos.x,pos.y)}
 		)		
 	}
 
-	pub fn reshape(&mut self, s:V3i){
-		// todo: do allow truncations etc
-		// todo: reshape to 2d, 3d
-		assert!(v3i_hmul_usize(self.shape)==v3i_hmul_usize(s));
-		self.shape=s;
-	}
 
 	// TODO ability to do the opposite e.g. map to vec's which become extra dim.
 	// fold along axes collapse the array ?
 	// e.g. run length encoding,packing, whatever.
-	pub fn fold_z<B,F> (&self,init_val:B, f:F) -> Array2d<B>
-		where B:Clone,F:Fn(V3i,B,&T)->B
+/*
+	fn fold_z<B,F> (&self,init_val:B, f:F) -> Array2d<B>
+		where B:Clone,F:Fn(V3i,B,&Self::Output)->B
 	{
 		self.map_xy(|s:&Self,x:i32,y:i32|{
+			let s_shape=s.index_size();
 			let mut acc=init_val.clone();
-			for z in 0..s.shape.z{
+			for z in 0..s_shape.z{
 				let pos=v3i(x,y,z);
 				acc=f(pos,acc,self.index(pos))
 			}
 			acc
 		})
 	}
+*/
 /*
 		let mut out=Array2d::new();
 		out.data.reserve(self.shape.y as usize *self.shape.z as usize);
@@ -645,40 +642,50 @@ impl<T:Clone> Array3d<T>{
 		out
 	}
 */
+	fold_axis!{fn fold_x traverse (y,z) reduce x}
+	fold_axis!{fn fold_y traverse (x,z) reduce y}
+	fold_axis!{fn fold_z traverse (x,y) reduce z}
+/*
 	/// produce a 2d array by folding along the X axis
-	pub fn fold_x<B:Clone,F:Fn(V3i,B,&T)->B> (&self,input:B, f:F) -> Array2d<B>{
+	fn fold_x<B:Clone,F:Fn(V3i,B,&Self::Output)->B> (&self,input:B, f:F) -> Array2d<B>{
 		let mut out=Array2d::new();
-		out.data.reserve(self.shape.y as usize *self.shape.z as usize);
-		for z in 0..self.shape.z {
-			for y in 0.. self.shape.y{
+		let shape=self.index_size();
+		out.data.reserve(shape.y as usize *shape.z as usize);
+		for z in 0..shape.z {
+			for y in 0.. shape.y{
 				let mut acc=input.clone();
-				for x in 0..self.shape.x{
+				for x in 0..shape.x{
 					let pos=v3i(x,y,z);
 					acc=f(pos,acc, self.index(pos));
 				}
 				out.data.push(acc);
 			}
 		}		
-		out.shape=v2i(self.shape.y,self.shape.z);
+		out.shape=v2i(shape.y, shape.z);
 		out		
 	}
+*/
 	/// fold values along x,y,z in turn without intermediate storage
-	pub fn fold_xyz<A,B,C,FOLDX,FOLDY,FOLDZ>(
+	fn fold_xyz<A,B,C,FOLDX,FOLDY,FOLDZ>(
 		&self,
-		(input_x,fx):(A,FOLDX), (input_y,fy):(B,FOLDY), (input_z,fz):(C,FOLDZ)
+		ifx:(A,FOLDX), ify:(B,FOLDY), ifz:(C,FOLDZ)
 	)->A
 	where
 				A:Clone,B:Clone,C:Clone,
-				FOLDZ:Fn(V3i,C,&T)->C,
+				FOLDZ:Fn(V3i,C,&Self::Output)->C,
 				FOLDY:Fn(i32,i32,B,&C)->B,
 				FOLDX:Fn(i32,A,&B)->A,
 	{
+		let (input_x,fx)=ifx;
+		let (input_y,fy)=ify;
+		let (input_z,fz)=ifz;
 		let mut ax=input_x.clone();
-		for x in 0..self.shape.x{
+		let shape=self.index_size();
+		for x in 0..shape.x{
 			let mut ay=input_y.clone();
-			for y in 0..self.shape.y{
+			for y in 0..shape.y{
 				let mut az=input_z.clone();//x accumulator
-				for z in 0..self.shape.z{
+				for z in 0..shape.z{
 					let pos=v3i(x,y,z);
 					az=fz(pos,az,self.index(pos));
 				}
@@ -689,22 +696,27 @@ impl<T:Clone> Array3d<T>{
 		ax
 	}
 	/// fold values along z,y,x in turn without intermediate storage
-	pub fn fold_zyx<A,B,C,FOLDX,FOLDY,FOLDZ>(
+	fn fold_zyx<A,B,C,FOLDX,FOLDY,FOLDZ>(
 		&self,
-		(input_x,fx):(A,FOLDX), (input_y,fy):(B,FOLDY), (input_z,fz):(C,FOLDZ)
+		ifx:(A,FOLDX), ify:(B,FOLDY), ifz:(C,FOLDZ)
 	)->C
 	where
 				A:Clone,B:Clone,C:Clone,
 				FOLDZ:Fn(i32,C,&B)->C,
 				FOLDY:Fn(i32,i32,B,&A)->B,
-				FOLDX:Fn(V3i,A,&T)->A,
+				FOLDX:Fn(V3i,A,&Self::Output)->A,
 	{
+		let (input_x,fx)=ifx;
+		let (input_y,fy)=ify;
+		let (input_z,fz)=ifz;
+	
+		let shape=self.index_size();
 		let mut az=input_z.clone();
-		for z in 0..self.shape.z{
+		for z in 0.. shape.z{
 			let mut ay=input_y.clone();
-			for y in 0..self.shape.y{
+			for y in 0..shape.y{
 				let mut ax=input_x.clone();//x accumulator
-				for x in 0..self.shape.x{
+				for x in 0..shape.x{
 					let pos=v3i(x,y,z);
 					ax=fx(pos,ax,self.index(pos));
 				}
@@ -716,11 +728,12 @@ impl<T:Clone> Array3d<T>{
 	}
 
 	/// fold the whole array to produce a single value
-	pub fn fold<B,F> (&self,input:B, f:F) -> B
-	where F:Fn(V3i,B,&T)->B,B:Clone
+	fn fold<B,F> (&self,input:B, f:F) -> B
+	where F:Fn(V3i,B,&Self::Output)->B,B:Clone
 	{
 		let mut acc=input;
-		for z in 0..self.shape.z { for y in 0.. self.shape.y{ for x in 0..self.shape.x{
+		let shape=self.index_size();
+		for z in 0..shape.z { for y in 0.. shape.y{ for x in 0..shape.x{
 			let pos=v3i(x,y,z);
 			acc=f(pos, acc,self.index(pos));
 		}}}
@@ -730,17 +743,17 @@ impl<T:Clone> Array3d<T>{
 	/// produce tiles by applying a function to every subtile
 	/// output size is divided by tilesize
 	/// must be exact multiple.
-	pub fn fold_tiles<B,F>(&self,tilesize:V3i, input:B,f:&F)->Array3d<B>
-		where F:Fn(V3i,B,&T)->B,B:Clone
+	fn fold_tiles<B,F>(&self,tilesize:V3i, input:B,f:&F)->Array3d<B>
+		where F:Fn(V3i,B,&Self::Output)->B,B:Clone
 	{
 		self.map_strided(tilesize,
-			|pos,_:&T|{self.fold_region(pos..v3iadd(pos,tilesize),input.clone(),f)})
+			|pos,_:&Self::Output|{self.fold_region(pos..v3iadd(pos,tilesize),input.clone(),f)})
 	}
 
 	/// subroutine for 'fold tiles', see context
 	/// closure is borrowed for multiple invocation by caller
-	pub fn fold_region<B,F>(&self,r:Range<V3i>, input:B,f:&F)->B
-		where F:Fn(V3i,B,&T)->B, B:Clone
+	fn fold_region<B,F>(&self,r:Range<V3i>, input:B,f:&F)->B
+		where F:Fn(V3i,B,&Self::Output)->B, B:Clone
 	{
 		let mut acc=input.clone();
 		for z in r.start.z..r.end.z{
@@ -753,10 +766,10 @@ impl<T:Clone> Array3d<T>{
 		}
 		acc
 	}
-	pub fn get_indexed(&self,pos:V3i)->(V3i,&T){(pos,self.index(pos))}
-	pub fn region_all(&self)->Range<V3i>{v3i(0,0,0)..self.shape}
-	pub fn map_region_strided<F,B>(&self,region:Range<V3i>,stride:V3i, f:F)->Array3d<B>
-		where F:Fn(V3i,&T)->B, B:Clone{
+	fn get_indexed(&self,pos:V3i)->(V3i,&Self::Output){(pos,self.index(pos))}
+	fn region_all(&self)->Range<V3i>{v3i(0,0,0)..self.index_size()}
+	fn map_region_strided<F,B>(&self,region:Range<V3i>,stride:V3i, f:F)->Array3d<B>
+		where F:Fn(V3i,&Self::Output)->B, B:Clone{
 		Array3d::from_fn(v3idiv(v3isub(region.end,region.start),stride),
 			|outpos:V3i|{
 				let inpos=v3iadd(region.start,v3imul(outpos,stride));
@@ -764,22 +777,22 @@ impl<T:Clone> Array3d<T>{
 			}
 		)
 	}
-	pub fn map_strided<F,B>(&self,stride:V3i,f:F)->Array3d<B>
-		where F:Fn(V3i,&T)->B, B:Clone{
+	fn map_strided<F,B>(&self,stride:V3i,f:F)->Array3d<B>
+		where F:Fn(V3i,&Self::Output)->B, B:Clone{
 		self.map_region_strided(self.region_all(),stride,f)
 	}
-	pub fn map_region<F,B>(&self,region:Range<V3i>,f:F)->Array3d<B>
-		where F:Fn(V3i,&T)->B, B:Clone{
+	fn map_region<F,B>(&self,region:Range<V3i>,f:F)->Array3d<B>
+		where F:Fn(V3i,&Self::Output)->B, B:Clone{
 		self.map_region_strided(region, v3ione(), f)
 	}
 	/// _X_     form of convolution  
 	/// XOX		passing each cell and it's
 	/// _X_		immiediate neighbours on each axis
-	pub fn convolute_neighbours<F,B>(&self,f:F)->Array3d<B>
-		where F:Fn(&T,Vec3<Neighbours<&T>>)->B ,B:Clone
+	fn convolute_neighbours<F,B>(&self,f:F)->Array3d<B>
+		where F:Fn(&Self::Output,Vec3<Neighbours<&Self::Output>>)->B ,B:Clone
 	{
-		self.map_region(v3ione()..v3isub(self.shape,v3ione()),
-			|pos:V3i,current_cell:&T|{
+		self.map_region(v3ione()..v3isub(self.index_size(),v3ione()),
+			|pos:V3i,current_cell:&Self::Output|{
 				f(	current_cell,
 					self::Vec3{
 						x:Neighbours{
@@ -793,21 +806,22 @@ impl<T:Clone> Array3d<T>{
 							next:self.index(v3i(pos.x,pos.y,pos.z+1))}})
 		})
 	}
-	pub fn index_wrap(&self,pos:V3i)->&T{self.get_wrap(pos)}
-	pub fn get_wrap(&self,pos:V3i)->&T{
-		self.index( v3imymod(pos, self.shape) )
+	fn index_wrap(&self,pos:V3i)->&Self::Output{self.get_wrap(pos)}
+	fn get_wrap(&self,pos:V3i)->&Self::Output{
+		self.index( v3imymod(pos, self.index_size()) )
 	}
-	pub fn get_ofs_wrap(&self,pos:V3i,dx:i32,dy:i32,dz:i32)->&T{
+	fn get_ofs_wrap(&self,pos:V3i,dx:i32,dy:i32,dz:i32)->&Self::Output{
 		self.get_wrap(v3iadd(pos, v3i(dx,dy,dz)))
 	}
-	pub fn convolute_neighbours_wrap<F,B>(&self,f:F)->Array3d<B>
-		where F:Fn(&T,Vec3<Neighbours<&T>>)->B,B:Clone 
+	fn convolute_neighbours_wrap<F,B>(&self,f:F)->Array3d<B>
+		where F:Fn(&Self::Output,Vec3<Neighbours<&Self::Output>>)->B,B:Clone 
 	{
 		// TODO - efficiently, i.e. share the offset addresses internally
 		// and compute the edges explicitely
 		// niave implementation calls mod for x/y/z individually and forms address
-		self.map_region(v3izero()..self.shape,
-			|pos:V3i,current_cell:&T|{
+		let shape=self.index_size();
+		self.map_region(v3izero()..shape,
+			|pos:V3i,current_cell:&Self::Output|{
 				f(	current_cell,
 					Vec3{
 						x:Neighbours{
@@ -822,10 +836,10 @@ impl<T:Clone> Array3d<T>{
 		})
 	}
 	/// special case of convolution for 2x2 cells, e.g. for marching cubes
-	pub fn convolute_2x2x2_wrap<F,B>(&self,f:F)->Array3d<B>
-		where F:Fn(V3i,[[[&T;2];2];2])->B,B:Clone
+	fn convolute_2x2x2_wrap<F,B>(&self,f:F)->Array3d<B>
+		where F:Fn(V3i,[[[&Self::Output;2];2];2])->B,B:Clone
 	{
-		self.map_region(v3izero()..self.shape,|pos,_|{
+		self.map_region(v3izero()..self.index_size(),|pos,_|{
 			f(pos,[
 				[	[self.get_ofs_wrap(pos,0, 0, 0),self.get_ofs_wrap(pos, 1, 0, 0)],
 					[self.get_ofs_wrap(pos,0, 1, 0),self.get_ofs_wrap(pos, 1, 1, 0)]
@@ -840,10 +854,10 @@ impl<T:Clone> Array3d<T>{
 	/// take 2x2x2 blocks, fold to produce new values
 	/// a b c d  -> f([[a,b],[e,f]]) f([[c,d],[g,h]])
 	/// e f g h 
-	pub fn fold_half_xyz<F,B>(&self,fold_fn:F)->Array3d<B>
-		where F:Fn(V3i,[[[&T;2];2];2])->B,B:Clone
+	fn fold_half_xyz<F,B>(&self,fold_fn:F)->Array3d<B>
+		where F:Fn(V3i,[[[&Self::Output;2];2];2])->B,B:Clone
 	{
-		Array3d::from_fn( v3idiv(self.shape,v3i(2,2,2)), |dpos:V3i|{
+		Array3d::from_fn( v3idiv(self.index_size(),v3i(2,2,2)), |dpos:V3i|{
 			let spos=v3imul(dpos,v3i(2,2,2));
 			fold_fn(dpos,
 					[	[	[self.index(v3iadd(spos,v3i(0,0,0))),self.index(v3iadd(spos,v3i(1,0,0)))],
@@ -912,7 +926,7 @@ impl<T> Index<V3i> for Array3d<T>{
 	}
 }
 
-impl<T:Clone> IndexMut<V3i> for Array3d<T>{
+impl<T> IndexMut<V3i> for Array3d<T>{
 	fn index_mut(&mut self, pos:V3i)->&mut T{
 		let i=self.linear_index(pos);
 		&mut self.data[i]
