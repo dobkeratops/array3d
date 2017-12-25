@@ -57,7 +57,9 @@ use std::cmp::PartialEq;
 extern crate lininterp;
 extern crate vec_xyzw;
 use lininterp::{Lerp,avr};
-
+fn div_rem(a:usize,b:usize)->(usize,usize){
+	(a/b,a%b)
+}
 
 // local mini maths decouples
 // TODO - make another crate declaring our style of Vec<T>
@@ -127,6 +129,8 @@ v3i_permute_v2i![v3i_xy(x,y), v3i_yz(y,z), v3i_xz(x,z)];
 
 pub fn v3i_hmul_usize(a:V3i)->usize{ a.x as usize*a.y as usize *a.z as usize}
 pub fn v2i_hmul_usize(a:V2i)->usize{ a.x as usize*a.y as usize}
+pub fn v2i_hadd_usize(a:V2i)->usize{ a.x as usize+a.y as usize}
+pub fn v3i_hadd_usize(a:V3i)->usize{ a.x as usize+a.y as usize +a.z as usize}
 
 pub struct Array2d<T>{pub shape:V2i,pub data:Vec<T>}
 pub struct Array3d<T>{pub shape:V3i,pub data:Vec<T>}
@@ -140,34 +144,91 @@ fn eval_linear_index(pos:V3i, stride:V3i)->usize{
 // want this especially for use of rust [..] syntax
 // and for block-copy interfaces.
 
-pub struct Array3dSlice<'a, T:'a>{linear_data:&'a [T],stride:V3i,start:V3i,end:V3i}
+pub struct Array3dSlice<'a, T:'a>{
+	linear_data:&'a [T],
+	li_stride:V3i,			// multiply by xyz to give linear data offset
+	start:V3i,end:V3i	// window *within* given linear data.
+}
+pub struct Array3dSliceMut<'a, T:'a>{
+	linear_data:&'a mut [T],
+	li_stride:V3i,			// multiply by xyz to give linear data offset
+	start:V3i,end:V3i	// window *within* given linear data.
+}
 
-impl<'a, T:Clone> Array3dSlice<'a,T>{
-	fn size3d(&self)->V3i{self.end-self.start}
-	fn set<'c>(&mut self, src:&'c Array3dSlice<T>){
-		assert!(self.size3d()==src.size3d());
-		for (pos,cell) in src.iter_cells(){
-			self[pos]=cell.clone();
+impl<'a, T:Clone+'a> Array3dSliceMut<'a,T>{
+//	fn index_size(&'a self)->V3i{self.end-self.start}
+	fn set<'c>(&'a mut self, src:&'c Array3dSlice<T>){
+		assert!(self.index_size()==src.index_size());
+		for (pos,lin_index) in IterXYZ::new(self.start,self.end, self.linear_index(self.start),self.li_stride){
+			self[pos]=src[v3isub(pos,self.start)].clone();
 		}
 	}
-
-	fn iter_cells(&self)->IterXYZIn<Self>{
+/*
+	fn iter_cells(&'a self)->IterXYZIn<Self>{
 		unimplemented!()
 	}
-	fn iter_cells_mut(&mut self)->IterXYZInMut<Self>{
+	fn iter_cells_mut(&'a mut self)->IterXYZInMut<Self>{
 		unimplemented!()
+	}
+*/
+}
+
+/// utility trait: types which can convert XYZ<->linear indices
+pub trait XYZLinearIndexable{
+	fn index_size(&self)->V3i;
+	fn linear_index(&self,pos:V3i)->LinearIndex;
+	fn pos_from_linear_index(&self,LinearIndex)->V3i;	
+}
+
+impl<'a,T:Clone+'a> IterXYZAble<'a> for Array3dSlice<'a,T>{
+	type Elem=T;
+	fn at_linear_index(&'a self,i:LinearIndex)->&'a Self::Elem{&self.linear_data[i]}
+}
+impl<'a,T:Clone+'a> IterXYZAble<'a> for Array3dSliceMut<'a,T>{
+	type Elem=T;
+	fn at_linear_index(&'a self,i:LinearIndex)->&'a Self::Elem{&self.linear_data[i]}
+}
+
+impl<'a,T:Clone+'a> IterXYZAbleMut<'a> for Array3dSliceMut<'a,T>{
+	fn at_linear_index_mut(&'a mut self,i:LinearIndex)->&'a mut Self::Elem{self.linear_data.index_mut(i)}
+}
+
+impl<'a,T:Clone+'a> XYZLinearIndexable for Array3dSlice<'a,T>{
+	fn index_size(&self)->V3i{v3isub(self.end,self.start)}
+	fn linear_index(&self,pos:V3i)->LinearIndex{ v3i_hadd_usize(v3imul(v3iadd(self.start,pos),self.li_stride))  }
+	fn pos_from_linear_index(&self,i:LinearIndex)->V3i{
+		let (rest,x)=div_rem(i,self.li_stride.x as usize);
+		let (rest,y)=div_rem(rest,self.li_stride.y as usize);
+		let (rest,z)=div_rem(rest,self.li_stride.z as usize);
+		v3i(x as i32,y as i32,z as i32)
+	}
+}
+impl<'a,T:Clone+'a> XYZLinearIndexable for Array3dSliceMut<'a,T>{
+	fn index_size(&self)->V3i{v3isub(self.end,self.start)}
+	fn linear_index(&self,pos:V3i)->LinearIndex{ v3i_hadd_usize(v3imul(v3iadd(self.start,pos),self.li_stride))  }
+	fn pos_from_linear_index(&self,i:LinearIndex)->V3i{
+		let (rest,x)=div_rem(i,self.li_stride.x as usize);
+		let (rest,y)=div_rem(rest,self.li_stride.y as usize);
+		let (rest,z)=div_rem(rest,self.li_stride.z as usize);
+		v3i(x as i32,y as i32,z as i32)
 	}
 }
 
 impl<'t,T:Clone> Index<V3i> for Array3dSlice<'t,T>{
 	type Output=T;
 	fn index(&self,pos:V3i)->&T{
-		self.linear_data[eval_linear_index(pos,self.stride())]
+		&self.linear_data[eval_linear_index(pos,self.li_stride)]
 	}
 }
-impl<'a,T:Clone> IndexMut<V3i> for Array3dSlice<'a,T>{
+impl<'t,T:Clone> Index<V3i> for Array3dSliceMut<'t,T>{
+	type Output=T;
+	fn index(&self,pos:V3i)->&T{
+		&self.linear_data[eval_linear_index(pos,self.li_stride)]
+	}
+}
+impl<'a,T:Clone> IndexMut<V3i> for Array3dSliceMut<'a,T>{
 	fn index_mut(&mut self,pos:V3i)->&mut T{
-		self.linear_data[eval_linear_index(pos,self.linear_stride)]
+		&mut self.linear_data[eval_linear_index(pos,self.li_stride)]
 	}
 }
 
@@ -304,53 +365,111 @@ impl IterXYZ{
 	}
 }
 
-struct IterXYZIn<T>{	// extracts the cells..
+/// interfacing generic 3d array stores/views with iterators
+/// uses this interface, supporting 3d indices&linear indices
+/// e.g. in a copy allows traversing one linearly
+
+pub trait IterXYZAble<'a> : Index<V3i> + XYZLinearIndexable{
+	type Elem;
+	fn at_linear_index(&'a self,i:usize)->&'a Self::Elem;
 }
-impl<'a ,A:IterXYZAble> Iterator for IterXYZIn<A>{
-	type Item=(V3i,&A::Item);
+pub trait IterXYZAbleMut<'a> : IndexMut<V3i> + IterXYZAble<'a>
+{
+	fn at_linear_index_mut(&'a mut self, i:usize)->&'a mut Self::Elem;
+}
+
+
+/*
+TODO we can't figure out the lifetimes/borrowchecker markup for this
+this should have let us share impl for slice & vec iteration
+Vec iteration was working, implemented directly.
+/// iterating an 'array3d' behaves like .iter().enumerate()
+/// todo - should we actually give slice2ds, slices?
+
+/// pair combining a 3d iteration description with a collection it's in
+struct IterXYZIn<'a,  A:IterXYZAble<'a>+'a>(&'a A, IterXYZ);	
+struct IterXYZInMut<'a, A:IterXYZAble<'a>+'a>(&'a mut A, IterXYZ);	
+
+impl<'a, A:IterXYZAble<'a>> Iterator for IterXYZIn<'a,A> {
+	type Item=(V3i,&'a A::Elem);
 	fn next(&mut self)->Option<Self::Item>{
 		if let Some(curr)=self.1.next(){
-			(curr.state.pos, self.at_linear_index(self.state.linear_index))
+			Some((curr.0, self.0.at_linear_index(curr.1)))
 		} else {None}
 	}
 }
+impl<'a,A:IterXYZAble<'a>> Iterator for IterXYZInMut<'a,A>{
+	type Item=(V3i,&'a mut A::Elem);
+	fn next(&mut self)->Option<Self::Item>{
+		if let Some(curr)=self.1.next(){
+			let elem:&'a mut A::Elem = (&self).0.at_linear_index_mut(curr.1);
+			Some((curr.0, elem ))
+		} else {None}
+	}
+}
+*/
 
 /// struct holding iteration info for a 3d array
 struct Array3dIter<'a,T:'a>(&'a Array3d<T>,IterXYZ);
+
 /// struct holding iteration info for a 3d array
 struct Array3dIterMut<'a,T:'a>(&'a mut Array3d<T>,IterXYZ);
 
-impl<T> Array3d<T>{// TODO is there an 'iterable' trait?
+impl<'a, T:Clone+'a> Iterator for Array3dIter<'a,T> {
+	type Item=(V3i,&'a T);
+	fn next(&mut self)->Option<Self::Item>{
+		if let Some(curr)=self.1.next(){
+			Some((curr.0, self.0.at_linear_index(curr.1)))
+		} else {None}
+	}
+}/*
+impl<'a, T:Clone+'a> Iterator for Array3dIterMut<'a,T> {
+	type Item=(V3i,&'a mut T);
+	fn next(&mut self)->Option<Self::Item>{
+		if let Some(curr)=self.1.next(){
+			Some((curr.0, self.0.at_linear_index_mut(curr.1)))
+		} else {None}
+	}
+}
+*/
+
+impl<T:Clone> Array3d<T>{// TODO is there an 'iterable' trait?
 	fn iter_cells<'a>(&'a self)->Array3dIter<'a,T>{
 		Array3dIter(self, IterXYZ::new(v3i(0,0,0),self.shape, 0 , self.linear_stride()))
 	}
-	fn iter_cells_mut<'a>(&'a self)->Array3dIterMut<'a,T>{
-		Array3dIterMut(self, IterXYZ::new(v3i(0,0,0),self.shape, 0 , self.linear_stride()))
+	fn iter_cells_mut<'a>(&'a mut self)->Array3dIterMut<'a,T>{
+		let shp=self.shape.clone();
+		let strd=self.linear_stride();
+		Array3dIterMut(self, IterXYZ::new(v3i(0,0,0),shp, 0 , strd))
 	}
 	fn linear_stride(&self)->V3i{v3i(1,self.shape.x,self.shape.x*self.shape.y)}
 }
 
-/// iterating an 'array3d' behaves like .iter().enumerate()
-/// todo - should we actually give slice2ds, slices?
-impl<'a ,T:Clone> Iterator for Array3dIter<'a,T> {
-	type Item=(V3i,&'a T);
-	fn next(&mut self)->Option<Self::Item>{
-		if let Some(curr)=self.1.next(){
-			(curr.state.pos, self.at_linear_index(self.state.linear_index))
-		} else {None}
+impl<T> XYZLinearIndexable for Array3d<T>{
+	fn index_size(&self)->V3i{self.shape}
+	fn linear_index(&self, pos:V3i)->LinearIndex{
+		// now this *could* exceed 2gb.
+		(pos.x as usize)+
+		(self.shape.x as usize)*( 
+			(pos.y as usize)+
+			(pos.z as usize)*(self.shape.y as usize)
+		)
 	}
-}
-impl<'a,T:Clone> Iterator for Array3dIterMut<'a,T> {
-	type Item=(V3i,&'a mut T);
-	fn next(&mut self)->Option<Self::Item>{
-		if let Some(curr)=self.1.next(){
-			(curr.state.pos, self.at_linear_index_mut(self.state.linear_index))
-		} else {None}
+	fn pos_from_linear_index(&self,i:LinearIndex)->V3i{
+		unimplemented!()
+//		let (x,rest)=
 	}
 }
 
+impl<'a,T:Clone> IterXYZAble<'a> for Array3d<T>{
+	type Elem=T;
+	fn at_linear_index(&'a self,i:LinearIndex)->&'a T{ self.data.index(i)}
+}
+impl<'a,T:Clone> IterXYZAbleMut<'a> for Array3d<T>{
+	fn at_linear_index_mut(&'a mut self,i:LinearIndex)->&'a mut T{ self.data.index_mut(i)}
+}
+
 impl<T:Clone> Array3d<T>{	
-	pub fn size3d(&self)->V3i{self.shape}
 	pub fn from_fn<F:Fn(V3i)->T> (s:V3i,f:F) -> Array3d<T> {
 		let mut a=Array3d{shape:s, data:Vec::new()};
 		a.data.reserve(v3i_hmul_usize(s));
@@ -383,17 +502,6 @@ impl<T:Clone> Array3d<T>{
 
 
 	pub fn len(&self)->usize{ v3i_hmul_usize(self.shape) }
-	pub fn linear_index(&self, pos:V3i)->LinearIndex{
-		// now this *could* exceed 2gb.
-		(pos.x as usize)+
-		(self.shape.x as usize)*( 
-			(pos.y as usize)+
-			(pos.z as usize)*(self.shape.y as usize)
-		)
-	}
-	pub fn at_linear_index(&self,i:LinearIndex)->&T{ self.data.index(i)}
-	pub fn at_linear_index_mut(&self,i:LinearIndex)->&mut T{ self.data.index_mut(i)}
-	pub fn size(&self)->V3i{self.shape}
 	/// produce a new array3d by applying a function to every element
 	pub fn map_xyz<B:Clone,F:Fn(V3i,&T)->B> (&self,f:F) -> Array3d<B>{
 		Array3d::from_fn(self.shape,
