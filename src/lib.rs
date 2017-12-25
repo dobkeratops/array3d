@@ -2,12 +2,52 @@
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)] 
 #![allow(unused_variables)]
+#![allow(dead_code)]
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
+	use super::*;
+	#[test]
+	fn iter_xyz_behaviour() {
+		// test 1 axis of step
+		let rng1=IterXYZ::new(v3i(1,2,3),v3i(4,3,4), 0,v3i(100,10,1));
+		let cmp1=vec![(v3i(1,2,3),123), (v3i(2,2,3),223),(v3i(3,2,3),323)];
+
+		let outp1:Vec<_>=rng1.collect(); // test iter-collect 
+		assert_eq!(outp1,cmp1);
+
+		// test x-z axes. 
+		// use stride that places vlaues in digits for clarity
+		let rng2=IterXYZ::new(v3i(1,2,3),v3i(3,3,5), 8000,v3i(1,10,100) );
+		let cmp2=vec![(v3i(1,2,3),8321), (v3i(2,2,3),8322), (v3i(1,2,4),8421),(v3i(2,2,4),8422)];
+		let mut outp2=Vec::new();
+		for p in rng2 {	// test stepping through for notation
+			outp2.push(p);
+		}
+		assert_eq!(outp2,cmp2);
+		println!("foo\n");
+	}
+
+	fn my_array3d()->Array3d<i32>{
+		Array3d::from_fn(v3i(2,2,1),|pos|{pos.x*100+pos.y*10+pos.z})
+	}
+	#[test]
+	fn array3d_generation_and_indexing(){
+		
+		let foo=my_array3d();
+		assert_eq!(foo[v3i(0,0,0)],000);
+		assert_eq!(foo[v3i(0,1,0)],010);
+		assert_eq!(foo[v3i(1,0,0)],100);
+		assert_eq!(foo[v3i(1,1,0)],110);
+	}
+	#[test]
+	fn array3d_iteration(){
+		let foo=my_array3d();	
+		
+		let out:Vec<_>= foo.iter_cells().collect();
+		let cmp=vec![(v3i(0,0,0),&000),(v3i(1,0,0),&100),(v3i(0,1,0),&010),(v3i(1,1,0),&110)];
+		assert_eq!(out,cmp);
+	}
+
 }
 
 pub type Idx=i32;
@@ -92,6 +132,49 @@ pub struct Array2d<T>{pub shape:V2i,pub data:Vec<T>}
 pub struct Array3d<T>{pub shape:V3i,pub data:Vec<T>}
 pub struct Array4d<T>{pub shape:V4i,pub data:Vec<T>}
 
+fn eval_linear_index(pos:V3i, stride:V3i)->usize{
+	(pos.x as usize)*(stride.x as usize)+(pos.y as usize) * (stride.y as usize) + (pos.z as usize)*(stride.z as usize)
+}
+
+// slice of 3d array, independantly addressable/iterable.
+// want this especially for use of rust [..] syntax
+// and for block-copy interfaces.
+
+pub struct Array3dSlice<'a, T:'a>{linear_data:&'a [T],stride:V3i,start:V3i,end:V3i}
+
+impl<'a, T:Clone> Array3dSlice<'a,T>{
+	fn size3d(&self)->V3i{self.end-self.start}
+	fn set<'c>(&mut self, src:&'c Array3dSlice<T>){
+		assert!(self.size3d()==src.size3d());
+		for (pos,cell) in src.iter_cells(){
+			self[pos]=cell.clone();
+		}
+	}
+
+	fn iter_cells(&self)->IterXYZIn<Self>{
+		unimplemented!()
+	}
+	fn iter_cells_mut(&mut self)->IterXYZInMut<Self>{
+		unimplemented!()
+	}
+}
+
+impl<'t,T:Clone> Index<V3i> for Array3dSlice<'t,T>{
+	type Output=T;
+	fn index(&self,pos:V3i)->&T{
+		self.linear_data[eval_linear_index(pos,self.stride())]
+	}
+}
+impl<'a,T:Clone> IndexMut<V3i> for Array3dSlice<'a,T>{
+	fn index_mut(&mut self,pos:V3i)->&mut T{
+		self.linear_data[eval_linear_index(pos,self.linear_stride)]
+	}
+}
+
+/*TODO , what is rust assignment operator?
+impl<'a,'b,'c, T:Clone> Assign<Array3dSlice<'a,T>> for Array3dSlice<'b,T>{
+}
+*/
 impl<T:Clone> Array2d<T>{
 	pub fn new()->Self{Array2d{shape:v2i(0,0),data:Vec::new()}}
 	pub fn len(&self)->usize{ v2i_hmul_usize(self.shape) }
@@ -220,28 +303,54 @@ impl IterXYZ{
 		r
 	}
 }
-#[test]
-fn test_iter_xyz() {
-	// test 1 axis of step
-	let rng1=IterXYZ::new(v3i(1,2,3),v3i(4,3,4), 0,v3i(100,10,1));
-	let cmp1=vec![(v3i(1,2,3),123), (v3i(2,2,3),223),(v3i(3,2,3),323)];
 
-	let outp1=rng1.collect::<Vec<_>>(); // test iter-collect 
-    assert_eq!(outp1,cmp1);
-
-	// test x-z axes. 
-	// use stride that places vlaues in digits for clarity
-	let rng2=IterXYZ::new(v3i(1,2,3),v3i(3,3,5), 8000,v3i(1,10,100) );
-	let cmp2=vec![(v3i(1,2,3),8321), (v3i(2,2,3),8322), (v3i(1,2,4),8421),(v3i(2,2,4),8422)];
-	let mut outp2=Vec::new();
-	for p in rng2 {	// test stepping through for notation
-		outp2.push(p);
+struct IterXYZIn<T>{	// extracts the cells..
+}
+impl<'a ,A:IterXYZAble> Iterator for IterXYZIn<A>{
+	type Item=(V3i,&A::Item);
+	fn next(&mut self)->Option<Self::Item>{
+		if let Some(curr)=self.1.next(){
+			(curr.state.pos, self.at_linear_index(self.state.linear_index))
+		} else {None}
 	}
-    assert_eq!(outp2,cmp2);
-	println!("foo\n");
+}
+
+/// struct holding iteration info for a 3d array
+struct Array3dIter<'a,T:'a>(&'a Array3d<T>,IterXYZ);
+/// struct holding iteration info for a 3d array
+struct Array3dIterMut<'a,T:'a>(&'a mut Array3d<T>,IterXYZ);
+
+impl<T> Array3d<T>{// TODO is there an 'iterable' trait?
+	fn iter_cells<'a>(&'a self)->Array3dIter<'a,T>{
+		Array3dIter(self, IterXYZ::new(v3i(0,0,0),self.shape, 0 , self.linear_stride()))
+	}
+	fn iter_cells_mut<'a>(&'a self)->Array3dIterMut<'a,T>{
+		Array3dIterMut(self, IterXYZ::new(v3i(0,0,0),self.shape, 0 , self.linear_stride()))
+	}
+	fn linear_stride(&self)->V3i{v3i(1,self.shape.x,self.shape.x*self.shape.y)}
+}
+
+/// iterating an 'array3d' behaves like .iter().enumerate()
+/// todo - should we actually give slice2ds, slices?
+impl<'a ,T:Clone> Iterator for Array3dIter<'a,T> {
+	type Item=(V3i,&'a T);
+	fn next(&mut self)->Option<Self::Item>{
+		if let Some(curr)=self.1.next(){
+			(curr.state.pos, self.at_linear_index(self.state.linear_index))
+		} else {None}
+	}
+}
+impl<'a,T:Clone> Iterator for Array3dIterMut<'a,T> {
+	type Item=(V3i,&'a mut T);
+	fn next(&mut self)->Option<Self::Item>{
+		if let Some(curr)=self.1.next(){
+			(curr.state.pos, self.at_linear_index_mut(self.state.linear_index))
+		} else {None}
+	}
 }
 
 impl<T:Clone> Array3d<T>{	
+	pub fn size3d(&self)->V3i{self.shape}
 	pub fn from_fn<F:Fn(V3i)->T> (s:V3i,f:F) -> Array3d<T> {
 		let mut a=Array3d{shape:s, data:Vec::new()};
 		a.data.reserve(v3i_hmul_usize(s));
@@ -274,7 +383,7 @@ impl<T:Clone> Array3d<T>{
 
 
 	pub fn len(&self)->usize{ v3i_hmul_usize(self.shape) }
-	pub fn linear_index(&self, pos:V3i)->usize{
+	pub fn linear_index(&self, pos:V3i)->LinearIndex{
 		// now this *could* exceed 2gb.
 		(pos.x as usize)+
 		(self.shape.x as usize)*( 
@@ -282,6 +391,8 @@ impl<T:Clone> Array3d<T>{
 			(pos.z as usize)*(self.shape.y as usize)
 		)
 	}
+	pub fn at_linear_index(&self,i:LinearIndex)->&T{ self.data.index(i)}
+	pub fn at_linear_index_mut(&self,i:LinearIndex)->&mut T{ self.data.index_mut(i)}
 	pub fn size(&self)->V3i{self.shape}
 	/// produce a new array3d by applying a function to every element
 	pub fn map_xyz<B:Clone,F:Fn(V3i,&T)->B> (&self,f:F) -> Array3d<B>{
