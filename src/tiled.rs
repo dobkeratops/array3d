@@ -66,8 +66,8 @@ impl<T:Clone+PartialEq> Array3d<T>{
 		)
 	}
 }
-
-pub struct Array3dTile4<T>(pub Array3d<Either<T,Box<[[[T;4];4];4]>>>);
+type Tile4<T>=Either<T,Box<[[[T;4];4];4]>>;
+pub struct Array3dTile4<T>(pub Array3d<Tile4<T>>);
 impl<'a,T:Clone+PartialEq+Default> From<&'a Array3d<T>> for Array3dTile4<T>{
 	fn from(s:&Array3d<T>)->Self{ Array3dTile4(s.tile4()) }
 }
@@ -89,6 +89,31 @@ impl<T> Index<V3i> for Array3dTile4<T>{
 				&tiledata[sub.z as usize][sub.y as usize][sub.x as usize]
 			}
 		}
+	}
+}
+fn clone4<T:Clone>(t:T)->[T;4]{
+	[t.clone(),t.clone(),t.clone(),t]
+}
+/// write access to tile4 array TODO detect for writes that leave clear
+impl<T:Clone> IndexMut<V3i> for Array3dTile4<T>{	
+	fn index_mut(&mut self,pos:V3i)->&mut T{
+		let (tpos,sub)=v3itilepos(pos,2);
+		let a=self.0.index_mut(tpos);
+		// convert the tile to mutable contents
+		// unfortunately we can't erase yet
+		// 2 steps to appease borrowck
+		let newval=if let &mut Either::Left(ref val)=a{
+			Some(val.clone())
+		} else {None};
+		if let Some(v)=newval{
+			*a=Either::Right(Box::new(clone4(clone4(clone4(v)))));
+		};
+		// by now 'a' must be 'Right',i.e. a defined tile
+		match *a{
+			Either::Left(_)=>panic!("tile should be defined now"),
+			Either::Right(ref mut p)=>&mut (*p)[sub.z as usize][sub.y as usize][sub.x as usize]
+		}
+		// after writes you must cleanup	
 	}
 }
 
