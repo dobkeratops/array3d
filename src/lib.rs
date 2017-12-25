@@ -1,3 +1,7 @@
+#![allow(unused_imports)]
+#![allow(non_camel_case_types)]
+#![allow(non_upper_case_globals)] 
+#![allow(unused_variables)]
 #[cfg(test)]
 mod tests {
     #[test]
@@ -6,27 +10,46 @@ mod tests {
     }
 }
 
-//use super::*;
 pub type Idx=i32;
 use std::ops::Range;
 use std::ops::{Add,Sub,Mul,Div,Rem,BitOr,BitAnd,BitXor,Index,IndexMut};
+use std::cmp::PartialEq;
 extern crate lininterp;
+extern crate vec_xyzw;
 use lininterp::{Lerp,avr};
+
 
 // local mini maths decouples
 // TODO - make another crate declaring our style of Vec<T>
-#[derive(Copy,Debug,Clone)]
-pub struct Vec2<X,Y=X>{pub x:X,pub y:Y} // array3d::Vec3 should 'into()' into vector::Vec3 , etc.
-#[derive(Copy,Debug,Clone)]
-pub struct Vec3<X,Y=X,Z=Y>{pub x:X,pub y:Y,pub z:Z} // array3d::Vec3 should 'into()' into vector::Vec3 , etc.
-#[derive(Copy,Debug,Clone)]
-pub struct Vec4<X,Y=X,Z=Y,W=Z>{pub x:X,pub y:Y,pub z:Z,pub w:W} // array3d::Vec3 should 'into()' into vector::Vec3 , etc.
+//#[derive(Copy,Debug,Clone)]
+//pub struct Vec2<X,Y=X>{pub x:X,pub y:Y} // array3d::Vec3 should 'into()' into vector::Vec3 , etc.
+//#[derive(Copy,Debug,Clone)]
+//pub struct Vec3<X,Y=X,Z=Y>{pub x:X,pub y:Y,pub z:Z} // array3d::Vec3 should 'into()' into vector::Vec3 , etc.
+//#[derive(Copy,Debug,Clone)]
+
+pub use vec_xyzw::{Vec2,Vec3,Vec4};
+//pub struct Vec4<X,Y=X,Z=Y,W=Z>{pub x:X,pub y:Y,pub z:Z,pub w:W} // array3d::Vec3 should 'into()' into vector::Vec3 , etc.
 pub type V2i=Vec2<Idx>;
 pub type V3i=Vec3<Idx>;
 pub type V4i=Vec4<Idx>;//TODO
 type Axis_t=i32;
-const XAxis:Axis_t=0; const YAxis:Axis_t=1; const ZAxis:Axis_t=2;
 
+trait GetMut<I>{
+	type Output;
+	fn get_mut(&mut self, i:I)->&mut Self::Output;
+}
+
+impl<T:Copy> GetMut<i32> for Vec3<T>{
+	type Output=T;
+	fn get_mut(&mut self, i:i32)->&mut T{
+		match i{
+			0=>&mut self.x, 1=>&mut self.y, 2=>&mut self.z,
+			_=>panic!("axis index out of range")
+		}		
+	}
+}
+const XAxis:Axis_t=0; const YAxis:Axis_t=1; const ZAxis:Axis_t=2;
+/*
 impl<T> Index<i32> for Vec3<T>{
 	type Output=T;
 	fn index(&self,i:Axis_t)->&T{match i{ XAxis=>&self.x,YAxis=>&self.y,ZAxis=>&self.z,_=>panic!("Vec3 index out of range")}}
@@ -34,12 +57,13 @@ impl<T> Index<i32> for Vec3<T>{
 impl<T> IndexMut<i32> for Vec3<T>{
 	fn index_mut(&mut self,i:Axis_t)->&mut T{match i{ XAxis=>&mut self.x,YAxis=>&mut self.y,ZAxis=>&mut self.z,_=>panic!("Vec3 index out of range")}}
 }
-
+*/
 pub fn v2i(x:i32,y:i32)->V2i{Vec2{x:x,y:y}}
 pub fn v3i(x:i32,y:i32,z:i32)->V3i{Vec3{x:x,y:y,z:z}}
 pub fn v3izero()->V3i{v3i(0,0,0)}
 pub fn v3ione()->V3i{v3i(1,1,1)}
-pub fn v3iadd_axis(a:V3i,axis:i32, value:i32)->V3i{let mut r=a; r[axis]+=value; r}
+pub fn v3iadd_axis(a:V3i,axis:i32, value:i32)->V3i{let mut r=a; *r.get_mut(axis)+=value; r}
+#[derive(Debug,Copy,Clone)]
 pub struct Neighbours<T>{pub prev:T,pub next:T}
 type Neighbours2d<T>=Vec2<Neighbours<T>>;
 type Neighbours3d<T>=Vec3<Neighbours<T>>;
@@ -114,6 +138,109 @@ impl<T:Clone> IndexMut<V2i> for Array2d<T>{
 	}
 }
 
+pub struct IterXYZRange {
+	start:V3i,
+	end:V3i,
+	step:V3i,
+	li_base:LinearIndex,
+	li_stride:V3i,
+	li_step:usize,
+}
+type LinearIndex=usize;
+
+/// state for an XYZ iteration with linear index,
+/// todo- seperate into pure xyz 
+/// and linear index adapter
+pub struct IterXYZState{
+	pos:V3i,
+	linear_index:LinearIndex,	// array index
+}
+/// Iterator over 3d index positions and associated linear index computed from strides
+pub struct IterXYZ {
+	state:IterXYZState,
+	range:IterXYZRange
+}
+pub type IterXYZItem=(V3i,usize);
+fn step_xyz_iter(s:&mut IterXYZState,range:&IterXYZRange)->Option<IterXYZItem>{
+// todo - evaluate 'INDEX'incrementally, thats the point!
+	if s.pos.z>=range.end.z {return None;}
+	let ret=(s.pos,s.linear_index);
+	s.pos.x+=range.step.x;
+	s.linear_index += range.li_step;
+	if s.pos.x>=range.end.x{
+		s.pos.x=range.start.x;
+		s.pos.y+=range.step.y;
+		if s.pos.y>=range.end.y{
+			s.pos.y=range.start.y;
+			s.pos.z+=range.step.z;
+		}
+		s.linear_index=range.eval_linear_index(s.pos);
+	}
+	Some(ret)
+}
+impl IterXYZRange{
+	fn eval_linear_index(&self,pos:V3i)->usize{
+		(pos.x as usize*self.li_stride.x as usize)+
+		(pos.y as usize*self.li_stride.y as usize)+
+		(pos.z as usize*self.li_stride.z as usize)+
+		self.li_base
+	}
+}
+impl Iterator for IterXYZ{
+	type Item=IterXYZItem;
+	fn next(&mut self)->Option<Self::Item>{
+		step_xyz_iter(&mut self.state,&self.range)
+	}
+}
+
+impl IterXYZ{
+	fn new(start:V3i, end:V3i, base_index:usize , index_stride:V3i)->IterXYZ
+	{
+		let rng=IterXYZRange{
+				li_base:base_index,	
+				li_stride:index_stride,
+				li_step:1 * index_stride.x as usize,
+				start:start,
+				end:end,
+				step:v3i(1,1,1)
+			};
+		IterXYZ{
+			state:IterXYZState{
+				linear_index: rng.eval_linear_index(start),
+				pos:start,
+			},
+			range:rng,
+		}	
+	}
+	// 'step' assigned in builder-like manner similar to itertools
+	fn step(self,step:V3i)->IterXYZ{
+		let mut r=self;
+		r.range.step=step;
+		r.range.li_step=r.range.step.x as usize* r.range.li_stride.x as usize;
+		r
+	}
+}
+#[test]
+fn test_iter_xyz() {
+	// test 1 axis of step
+	let rng1=IterXYZ::new(v3i(1,2,3),v3i(4,3,4), 0,v3i(100,10,1));
+	let cmp1=vec![(v3i(1,2,3),123), (v3i(2,2,3),223),(v3i(3,2,3),323)];
+
+	let outp1=rng1.collect::<Vec<_>>(); // test iter-collect 
+    assert_eq!(outp1,cmp1);
+
+	// test x-z axes. 
+	// use stride that places vlaues in digits for clarity
+	let rng2=IterXYZ::new(v3i(1,2,3),v3i(3,3,5), 8000,v3i(1,10,100) );
+	let cmp2=vec![(v3i(1,2,3),8321), (v3i(2,2,3),8322), (v3i(1,2,4),8421),(v3i(2,2,4),8422)];
+	let mut outp2=Vec::new();
+	for p in rng2 {	// test stepping through for notation
+		outp2.push(p);
+	}
+    assert_eq!(outp2,cmp2);
+	println!("foo\n");
+}
+
 impl<T:Clone> Array3d<T>{	
 	pub fn from_fn<F:Fn(V3i)->T> (s:V3i,f:F) -> Array3d<T> {
 		let mut a=Array3d{shape:s, data:Vec::new()};
@@ -129,7 +256,7 @@ impl<T:Clone> Array3d<T>{
 	/// the motivation is to share state across the production of
 	///  a block of adjacent cells
 	pub fn from_fn_doubled<F:Fn(V3i)->(T,T)> (sz:V3i,axis:i32, f:F)->Array3d<T>{
-		let mut scale=v3i(1,1,1); scale[axis]*=2;
+		let mut scale=v3i(1,1,1); *scale.get_mut(axis)*=2;
 		let mut d=Array3d{shape:v3imul(sz,scale),data:Vec::new()};
 		d.data.reserve(sz.x as usize * sz.y as usize * sz.z as usize);
 		for z in 0..sz.z {for y in 0..sz.y{ for x in 0..sz.x{
@@ -436,7 +563,9 @@ impl<T:Clone> Array3d<T>{
 	}
 
 	/// take 2x2x2 blocks, fold to produce new values
-	pub fn fold_half<F,B>(&self,fold_fn:F)->Array3d<B>
+	/// a b c d  -> f([[a,b],[e,f]]) f([[c,d],[g,h]])
+	/// e f g h 
+	pub fn fold_half_xyz<F,B>(&self,fold_fn:F)->Array3d<B>
 		where F:Fn(V3i,[[[&T;2];2];2])->B,B:Clone
 	{
 		Array3d::from_fn( v3idiv(self.shape,v3i(2,2,2)), |dpos:V3i|{
@@ -469,7 +598,7 @@ impl<T:Clone+Lerp> Array3d<T>
 {
 	/// downsample, TODO downsample centred on alternate cells
 	fn downsample_half(&self)->Array3d<T>{
-		self.fold_half(|pos:V3i,cell:[[[&T;2];2];2]|->T{
+		self.fold_half_xyz(|pos:V3i,cell:[[[&T;2];2];2]|->T{
 			
 			avr(
 				&avr(
