@@ -520,9 +520,11 @@ impl<T:Clone> Array3d<T>{
 		d
 	}
 
-	pub fn fill_val(size:V3i,val:T)->Array3d<T>{let pval=&val;Self::from_fn(size,|_|pval.clone())}
+	pub fn fill_val(size:V3i,val:&T)->Array3d<T>{let pval=&val;Self::from_fn(size,|_|val.clone())}
 
-
+	/// initialize with repeat value:
+	/// synonym follows naming convention 'from_'
+	pub fn from_val(size:V3i,val:&T)->Self{Self::fill_val(size,val)}
 
 	pub fn len(&self)->usize{ v3i_hmul_usize(self.shape) }
 	/// produce a new array3d by applying a function to every element

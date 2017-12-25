@@ -1,9 +1,10 @@
 use super::*;
 
-/// either type, TODO find in libraries
+/// TODO - sparse content option
+/// fill with single value, single value + sparse, dense
 #[derive(Clone,Debug)]
-pub enum Either<A,B> {
-	Left(A),Right(B)
+pub enum Tile4<T> {
+	Fill(T),Detail(Box<[[[T;4];4];4]>)
 }
 
 impl<T:Clone+PartialEq> Array3d<T>{
@@ -52,40 +53,40 @@ impl<T:Clone+PartialEq> Array3d<T>{
 	/// compressed tiling
 	/// macro cells include either single value or detail
 	/// 2x2x2 and 4x4x4 manually written.. awaiting <T,N>
-	fn tile4(&self)->Array3d<Either<T,Box<[[[T;4];4];4]>>>{
+	fn tile4(&self)->Array3d<Tile4<T>>{
 		let cellsize=v3i(4,4,4);
 		Array3d::from_fn(
 			v3idiv(self.index_size(),cellsize),
 			|pos|{
 				let srcpos=v3imul(pos,cellsize);
 				match self.is_region_homogeneous(srcpos,v3iadd(srcpos,cellsize)){
-					Some(cell)=>Either::Left(cell),
-					None=>Either::Right(Box::new(self.copy4x4x4(srcpos)))
+					Some(cell)=>Tile4::Fill(cell),
+					None=>Tile4::Detail(Box::new(self.copy4x4x4(srcpos)))
 				}
 			}
 		)
 	}
 }
-type Tile4<T>=Either<T,Box<[[[T;4];4];4]>>;
-pub struct Array3dTile4<T>(pub Array3d<Tile4<T>>);
-impl<'a,T:Clone+PartialEq+Default> From<&'a Array3d<T>> for Array3dTile4<T>{
-	fn from(s:&Array3d<T>)->Self{ Array3dTile4(s.tile4()) }
+/// 3d array in 4x4x3 tiles; contain either a single fill value or 4x4x4 individual values
+pub struct Array3dTiled4<T>(pub Array3d<Tile4<T>>);
+impl<'a,T:Clone+PartialEq+Default> From<&'a Array3d<T>> for Array3dTiled4<T>{
+	fn from(s:&Array3d<T>)->Self{ Array3dTiled4(s.tile4()) }
 }
 /// expand out raw array from, TODO - efficiently,
 /// there should be a tiled constructor for Array3d<T> that works inplace
-impl<'a,T:Clone> From<&'a Array3dTile4<T>> for Array3d<T> {
-	fn from(src:&Array3dTile4<T>)->Array3d<T>{
+impl<'a,T:Clone> From<&'a Array3dTiled4<T>> for Array3d<T> {
+	fn from(src:&Array3dTiled4<T>)->Array3d<T>{
 		Array3d::from_fn(v3imuls(src.0.index_size(),4),|pos|{src[pos].clone()})
 	}
 }
 /// read access to tile4 array
-impl<T> Index<V3i> for Array3dTile4<T>{	
+impl<T> Index<V3i> for Array3dTiled4<T>{	
 	type Output=T;
 	fn index(&self,pos:V3i)->&T{
 		let (tpos,sub)=v3itilepos(pos,2);
 		match self.0.index(tpos){
-			&Either::Left(ref x)=>&x,
-			&Either::Right(ref tiledata)=>{
+			&Tile4::Fill(ref x)=>&x,
+			&Tile4::Detail(ref tiledata)=>{
 				&tiledata[sub.z as usize][sub.y as usize][sub.x as usize]
 			}
 		}
@@ -94,28 +95,46 @@ impl<T> Index<V3i> for Array3dTile4<T>{
 fn clone4<T:Clone>(t:T)->[T;4]{
 	[t.clone(),t.clone(),t.clone(),t]
 }
+impl<T:Clone> Array3dTiled4<T>{
+	fn from_val(size:V3i,val:&T)->Self{
+		Array3dTiled4(Array3d::from_val(v3idivs(size,4),&Tile4::Fill(val.clone())))
+	}
+}
 /// write access to tile4 array TODO detect for writes that leave clear
-impl<T:Clone> IndexMut<V3i> for Array3dTile4<T>{	
+impl<T:Clone> IndexMut<V3i> for Array3dTiled4<T>{	
 	fn index_mut(&mut self,pos:V3i)->&mut T{
 		let (tpos,sub)=v3itilepos(pos,2);
 		let a=self.0.index_mut(tpos);
 		// convert the tile to mutable contents
 		// unfortunately we can't erase yet
 		// 2 steps to appease borrowck
-		let newval=if let &mut Either::Left(ref val)=a{
+		let newval=if let &mut Tile4::Fill(ref val)=a{
 			Some(val.clone())
 		} else {None};
 		if let Some(v)=newval{
-			*a=Either::Right(Box::new(clone4(clone4(clone4(v)))));
+			*a=Tile4::Detail(Box::new(clone4(clone4(clone4(v)))));
 		};
 		// by now 'a' must be 'Right',i.e. a defined tile
 		match *a{
-			Either::Left(_)=>panic!("tile should be defined now"),
-			Either::Right(ref mut p)=>&mut (*p)[sub.z as usize][sub.y as usize][sub.x as usize]
+			Tile4::Fill(_)=>panic!("tile should be defined now"),
+			Tile4::Detail(ref mut p)=>&mut (*p)[sub.z as usize][sub.y as usize][sub.x as usize]
 		}
 		// after writes you must cleanup	
 	}
 }
 
+#[test]
+fn try_tiles(){
+	let mut tiles=Array3dTiled4::<i32>::from_val(v3i(8,8,8),&0);
+	// start with empty tiles, write some values, see what we have..
+	let pos1=v3i(1,3,1);
+	let pos2=v3i(5,3,7);
+	let pos3=v3i(2,3,3);
+	tiles[pos1]=1;
+	tiles[pos2]=2;
+	assert_eq!(tiles[pos1],1);
+	assert_eq!(tiles[pos2],2);
+	assert_eq!(tiles[pos3],0);
+}
 
 
