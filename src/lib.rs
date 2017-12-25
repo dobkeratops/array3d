@@ -3,6 +3,7 @@
 #![allow(non_upper_case_globals)] 
 #![allow(unused_variables)]
 #![allow(dead_code)]
+#![feature(slice_get_slice)]
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -191,6 +192,7 @@ pub trait XYZLinearIndexable{
 	fn pos_from_linear_index(&self,LinearIndex)->V3i;	
 }
 
+
 impl<'a,T:Clone+'a> IterXYZAble<'a> for Array3dSlice<'a,T>{
 	type Elem=T;
 	fn at_linear_index(&'a self,i:LinearIndex)->&'a Self::Elem{&self.linear_data[i]}
@@ -348,6 +350,29 @@ impl Iterator for IterXYZ{
 	}
 }
 
+/// region of array3d, analogous to array slices.
+/// 'TS'=collecton of T
+pub struct RangeOf<'a,I,TS:'a+Index<I>>(Range<I>, &'a TS );
+pub struct RangeOfMut<'a,I,TS:'a+IndexMut<I>+Index<I>>(Range<I>, &'a mut TS );
+
+impl<'a,I,TS:'a+Index<I>> Index<I> for RangeOf<'a,I,TS> {
+	type Output=<TS as Index<I>>::Output;
+	fn index(&self,i:I)->&Self::Output{
+		self.1.index(i)
+	}
+}
+impl<'a,I,TS:'a+IndexMut<I>> Index<I> for RangeOfMut<'a,I,TS> {
+	type Output=<TS as Index<I>>::Output;
+	fn index(&self,i:I)->&Self::Output{
+		self.1.index(i)
+	}
+}
+impl<'a,I,TS:'a+IndexMut<I>> IndexMut<I> for RangeOfMut<'a,I,TS> {
+	fn index_mut(&mut self,i:I)->&mut Self::Output{
+		self.1.index_mut(i)
+	}
+}
+
 impl IterXYZ{
 	fn new(start:V3i, end:V3i, base_index:usize , index_stride:V3i)->IterXYZ
 	{
@@ -429,6 +454,11 @@ impl<T:Clone> Array3d<T>{
 	/// destructure
 	fn to_vec(self)->(V3i,Vec<T>){
 		(self.shape,self.data)
+	}
+	/// get a region, TODO can this be made to 
+	/// work with rust's nifty array syntax?
+	fn range<'a>(&'a self, rng:Range<V3i>)->RangeOf<'a,V3i,Self>{
+		RangeOf(rng,self)		
 	}
 }
 
@@ -528,11 +558,7 @@ impl<T:Clone> Array3d<T>{
 
 	pub fn len(&self)->usize{ v3i_hmul_usize(self.shape) }
 	/// produce a new array3d by applying a function to every element
-	pub fn map_xyz<B:Clone,F:Fn(V3i,&T)->B> (&self,f:F) -> Array3d<B>{
-		Array3d::from_fn(self.shape,
-			|pos:V3i|f(pos,self.index(pos))
-		)
-	}
+
 	pub fn map_strided_region<B:Clone,F:Fn(V3i,&T)->B> 
 		(&self,range:Range<V3i>,stride:V3i, f:F) -> Array3d<B>
 	{
@@ -545,6 +571,11 @@ impl<T:Clone> Array3d<T>{
 	}
 
 	/// internal iteration with inplace mutation
+	pub fn map_xyz<B:Clone,F:Fn(V3i,&T)->B> (&self,f:F) -> Array3d<B>{
+		Array3d::from_fn(self.shape,
+			|pos:V3i|f(pos,self.index(pos))
+		)
+	}
 	pub fn for_each<F:Fn(V3i,&mut T)> (&mut self,f:F){
 		for z in 0..self.shape.z{ for y in 0..self.shape.y { for x in 0.. self.shape.x{
 			let pos=v3i(x,y,z);

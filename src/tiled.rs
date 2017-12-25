@@ -3,6 +3,7 @@ use super::*;
 /// TODO - sparse content option
 /// fill with single value, single value + sparse, dense
 #[derive(Clone,Debug)]
+
 pub enum Tile4<T> {
 	Fill(T),Detail(Box<[[[T;4];4];4]>)
 }
@@ -67,7 +68,9 @@ impl<T:Clone+PartialEq> Array3d<T>{
 		)
 	}
 }
-/// 3d array in 4x4x3 tiles; contain either a single fill value or 4x4x4 individual values
+/// 3d array in 4x4x4 tiles; 
+/// tiles contain either a single fill value or 4x4x4 individual values
+/// 4x4x4 is a sweetspot, more pointer overhead at 2x2x2 (might as well try octree), 8x8x8 is too coarse
 pub struct Array3dTiled4<T>(pub Array3d<Tile4<T>>);
 impl<'a,T:Clone+PartialEq+Default> From<&'a Array3d<T>> for Array3dTiled4<T>{
 	fn from(s:&Array3d<T>)->Self{ Array3dTiled4(s.tile4()) }
