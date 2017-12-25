@@ -50,6 +50,8 @@ mod tests {
 
 }
 
+pub mod tiled;
+pub use tiled::*;
 pub type Idx=i32;
 use std::ops::Range;
 use std::ops::{Add,Sub,Mul,Div,Rem,BitOr,BitAnd,BitXor,Index,IndexMut};
@@ -96,7 +98,7 @@ impl<T> Index<i32> for Vec3<T>{
 	type Output=T;
 	fn index(&self,i:Axis_t)->&T{match i{ XAxis=>&self.x,YAxis=>&self.y,ZAxis=>&self.z,_=>panic!("Vec3 index out of range")}}
 }
-impl<T> IndexMut<i32> for Vec3<T>{
+impl<T> IndexMut<i32> for Ve3<T>{
 	fn index_mut(&mut self,i:Axis_t)->&mut T{match i{ XAxis=>&mut self.x,YAxis=>&mut self.y,ZAxis=>&mut self.z,_=>panic!("Vec3 index out of range")}}
 }
 */
@@ -126,6 +128,15 @@ impl MyMod for i32{
 }
 v3i_operators![(v3iadd=>add),(v3isub=>sub),(v3imul=>mul),(v3idiv=>div),(v3irem=>rem),(v3imin=>min),(v3imax=>max),(v3imymod=>mymod)];
 v3i_permute_v2i![v3i_xy(x,y), v3i_yz(y,z), v3i_xz(x,z)];
+
+pub fn v3imuls(a:V3i,s:i32)->V3i{v3i(a.x*s,a.y*s,a.z*s)}
+pub fn v3idivs(a:V3i,s:i32)->V3i{v3i(a.x/s,a.y/s,a.z/s)}
+pub fn v3iands(a:V3i,s:i32)->V3i{v3i(a.x&s,a.y&s,a.z&s)}
+pub fn v3ishrs(a:V3i,s:i32)->V3i{v3i(a.x>>s,a.y>>s,a.z>>s)}
+pub fn v3ishls(a:V3i,s:i32)->V3i{v3i(a.x<<s,a.y<<s,a.z<<s)}
+pub fn v3itilepos(a:V3i,tile_shift:i32)->(V3i,V3i){
+	(v3ishrs(a,tile_shift),v3iands(a,(1<<tile_shift)-1))
+}
 
 pub fn v3i_hmul_usize(a:V3i)->usize{ a.x as usize*a.y as usize *a.z as usize}
 pub fn v2i_hmul_usize(a:V2i)->usize{ a.x as usize*a.y as usize}
@@ -408,6 +419,18 @@ impl<'a,A:IterXYZAble<'a>> Iterator for IterXYZInMut<'a,A>{
 	}
 }
 */
+
+impl<T:Clone> Array3d<T>{
+	/// consume a vec to build
+	fn from_vec(size:V3i,v:Vec<T>)->Self{
+		assert!((size.x*size.y*size.z) as usize==v.len());
+		Array3d{shape:size,data:v}
+	}
+	/// destructure
+	fn to_vec(self)->(V3i,Vec<T>){
+		(self.shape,self.data)
+	}
+}
 
 /// struct holding iteration info for a 3d array
 struct Array3dIter<'a,T:'a>(&'a Array3d<T>,IterXYZ);
@@ -845,15 +868,14 @@ impl<T:Clone+Lerp> Array3d<T>
 		// todo - should be possible in one step, without 3 seperate buffer traversals!
 		self.upsample_double_axis(XAxis).upsample_double_axis(YAxis).upsample_double_axis(ZAxis)
 	}
-
 }
 
-impl<T:Clone> Index<V3i> for Array3d<T>{
+
+impl<T> Index<V3i> for Array3d<T>{
 	type Output=T;
 	fn index(&self, pos:V3i)->&T{
 		let i=self.linear_index(pos);
 		&self.data[i]
-		
 	}
 }
 
