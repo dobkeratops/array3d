@@ -598,7 +598,7 @@ impl<T:Clone> Array3d<T>{
 impl<TS:XYZIndexable> XYZInternalIterators for TS{}
 
 macro_rules! fold_axis{(fn $fname:ident traverse ($u:ident,$v:ident) reduce $w:ident )=>{
-	/// produce a 2d array by folding along the X axis
+	/// produce a 2d array by folding along the specified axis, with the resulting axes corresponding to the others
 	fn $fname<B:Clone,F:Fn(V3i,B,&Self::Output)->B> (&self,input:B, f:F) -> Array2d<B>{
 		let mut out=Array2d::new();
 		let shape=self.index_size();
@@ -858,8 +858,9 @@ pub trait XYZInternalIterators : XYZIndexable{
 	}
 
 	/// produce tiles by applying a function to every subtile
-	/// output size is divided by tilesize
-	/// must be exact multiple.
+	///
+	/// The output size is divided by the tilesize;
+	/// there must be an exact multiple of the given tilesize in the inputs 
 	fn fold_tiles<B,F>(&self,tilesize:V3i, input:B,f:&F)->Array3d<B>
 		where F:Fn(V3i,B,&Self::Output)->B,B:Clone
 	{
@@ -903,9 +904,7 @@ pub trait XYZInternalIterators : XYZIndexable{
 		where F:Fn(V3i,&Self::Output)->B, B:Clone{
 		self.map_region_strided(region, v3i(1,1,1), f)
 	}
-	/// _X_     form of convolution  
-	/// XOX		passing each cell and it's
-	/// _X_		immiediate neighbours on each axis
+	/// Simple convolution which only considers a cell with it's immediate neighbours along each axis, i.e. inputs are (x,y,z), (x-1,y,z),(x+1,y,z), (x,x-1,z),(x,x+1,z), (x,y,z-1),(x,y,z+1)
 	fn convolute_neighbours<F,B>(&self,f:F)->Array3d<B>
 		where F:Fn(&Self::Output,Vec3<Neighbours<&Self::Output>>)->B ,B:Clone
 	{
@@ -924,6 +923,7 @@ pub trait XYZInternalIterators : XYZIndexable{
 							next:self.index(pos+v3i(0,0,1)) }})
 		})
 	}
+	/// version of indexed element access allowing wrap-around indices
 	fn index_wrap(&self,pos:V3i)->&Self::Output{self.get_wrap(pos)}
 	fn get_wrap(&self,pos:V3i)->&Self::Output{
 		self.index( v3imymod(pos, self.index_size()) )
