@@ -8,5 +8,5 @@ license = "MIT"
 repository = "https://github.com/dobkeratops/array3d"
 
 [dependencies]
-lininterp = "0.1.0"
+lininterp = { git = "file:///Users/walter/rust_projects/lininterp"}
 vec_xyzw = { git = "file:///Users/walter/rust_projects/vec_xyzw" }

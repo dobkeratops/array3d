@@ -1,9 +1,10 @@
 use super::*;
 
+/// 4x4x4 cell Tile for simple compression:
+/// option of a single repeated value, or a real value
 /// TODO - sparse content option
 /// fill with single value, single value + sparse, dense
 #[derive(Clone,Debug)]
-
 pub enum Tile4<T> {
 	Fill(T),Detail(Box<[[[T;4];4];4]>)
 }
@@ -15,13 +16,15 @@ impl<T:Clone+PartialEq> Array3d<T>{
 	fn iter_at_sized(&self,start:V3i, size:V3i)->IterXYZ{
 		IterXYZ::new(start,v3iadd(start,size), self.linear_index(start),self.linear_stride())
 	}
+	/// check if all values in a region are equal to the given value
 	pub fn is_region_all_eq(&self,val:&T,start:V3i,end:V3i)->bool{
 		for (pos,i) in self.iter_from_to(start,end){
 			if self.at_linear_index(i)!=val{ return false}
 		}
 		return true;
 	}
-	pub fn is_region_homogeneous(&self,start:V3i,end:V3i)->Option<T>{
+	/// check if all the values in a region are the same. if so return the common value; else return None.
+	pub fn get_homogeneous_value(&self,start:V3i,end:V3i)->Option<T>{
 // grab 4 consecutive elements in the x axis
 		let ref_val=self.index(start);
 		if self.is_region_all_eq(ref_val,start,end){ Some(ref_val.clone())}
@@ -37,12 +40,14 @@ impl<T:Clone+PartialEq> Array3d<T>{
 		[self.at_linear_index(i).clone(),self.at_linear_index(i+1).clone(),
 		self.at_linear_index(i+2).clone(),self.at_linear_index(i+3).clone()]
 	}
+	/// assemble 4 X's into 4x4
 	fn copy4x4_xy(&self,pos:V3i)->[[T;4];4]{
 		assert!(pos.y+4<=self.shape.y);
 		[self.copy4_x(pos),self.copy4_x(v3iadd(pos,v3i(0,1,0))),
 		self.copy4_x(v3iadd(pos,v3i(0,2,0))),self.copy4_x(v3iadd(pos,v3i(0,3,0)))]
 	}
 
+	/// assemble 4 XYs into 4x4x4
 	fn copy4x4x4(&self,pos:V3i)->[[[T;4];4];4]{
 		//setup and overwrite :(
 		// to do cleanly+efficient.. need array4 constructor and repeated calls.
@@ -55,12 +60,11 @@ impl<T:Clone+PartialEq> Array3d<T>{
 	/// macro cells include either single value or detail
 	/// 2x2x2 and 4x4x4 manually written.. awaiting <T,N>
 	fn tile4(&self)->Array3d<Tile4<T>>{
-		let cellsize=v3i(4,4,4);
 		Array3d::from_fn(
-			v3idiv(self.index_size(),cellsize),
+			v3idiv_s(self.index_size(),4),
 			|pos|{
-				let srcpos=v3imul(pos,cellsize);
-				match self.is_region_homogeneous(srcpos,v3iadd(srcpos,cellsize)){
+				let srcpos=v3imul_s(pos,4);
+				match self.get_homogeneous_value(srcpos,v3iadd_s(srcpos,4)){
 					Some(cell)=>Tile4::Fill(cell),
 					None=>Tile4::Detail(Box::new(self.copy4x4x4(srcpos)))
 				}
@@ -68,9 +72,12 @@ impl<T:Clone+PartialEq> Array3d<T>{
 		)
 	}
 }
-/// 3d array in 4x4x4 tiles; 
+/// 3d array in 4x4x4 tiles, simple compression;
 /// tiles contain either a single fill value or 4x4x4 individual values
-/// 4x4x4 is a sweetspot, more pointer overhead at 2x2x2 (might as well try octree), 8x8x8 is too coarse
+/// rationale: (not profiled yet)
+/// 4x4x4 is a sweetspot, more pointer overhead at 2x2x2 (might as well try octree) whilst 8x8x8 is too coarse.
+/// 64cells = 8x8 (commmon 2d tile size) or 4x4x4
+
 pub struct Array3dTiled4<T>(pub Array3d<Tile4<T>>);
 impl<'a,T:Clone+PartialEq+Default> From<&'a Array3d<T>> for Array3dTiled4<T>{
 	fn from(s:&Array3d<T>)->Self{ Array3dTiled4(s.tile4()) }
@@ -79,7 +86,7 @@ impl<'a,T:Clone+PartialEq+Default> From<&'a Array3d<T>> for Array3dTiled4<T>{
 /// there should be a tiled constructor for Array3d<T> that works inplace
 impl<'a,T:Clone> From<&'a Array3dTiled4<T>> for Array3d<T> {
 	fn from(src:&Array3dTiled4<T>)->Array3d<T>{
-		Array3d::from_fn(v3imuls(src.0.index_size(),4),|pos|{src[pos].clone()})
+		Array3d::from_fn(v3imul_s(src.0.index_size(),4),|pos|{src[pos].clone()})
 	}
 }
 /// read access to tile4 array
@@ -95,15 +102,20 @@ impl<T> Index<V3i> for Array3dTiled4<T>{
 		}
 	}
 }
-fn clone4<T:Clone>(t:T)->[T;4]{
+
+/// helper function - clone a value 4 times to produce a rust array; Saves restricting Tile helper code to Copy types
+pub fn clone4<T:Clone>(t:T)->[T;4]{
 	[t.clone(),t.clone(),t.clone(),t]
+}
+pub fn clone2<T:Clone>(t:T)->[T;2]{
+	[t.clone(),t]
 }
 impl<T:Clone> Array3dTiled4<T>{
 	fn from_val(size:V3i,val:&T)->Self{
-		Array3dTiled4(Array3d::from_val(v3idivs(size,4),&Tile4::Fill(val.clone())))
+		Array3dTiled4(Array3d::from_val(v3idiv_s(size,4),&Tile4::Fill(val.clone())))
 	}
 }
-/// write access to tile4 array TODO detect for writes that leave clear
+/// Write access to tile4 array,converting any written 'compressed tiles' to uncompressed; TODO detect for writes that leave clear for compression.
 impl<T:Clone> IndexMut<V3i> for Array3dTiled4<T>{	
 	fn index_mut(&mut self,pos:V3i)->&mut T{
 		let (tpos,sub)=v3itilepos(pos,2);

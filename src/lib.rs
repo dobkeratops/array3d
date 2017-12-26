@@ -5,6 +5,16 @@
 #![allow(dead_code)]
 #![feature(slice_get_slice)]
 #![feature(associated_type_defaults)]
+
+//! 2d,3d (TODO-4d) Array types,
+//! helper functions for internal&external iterators
+//! this library focusses on internal iterators
+//! for clarity with future parallel version
+//! a Tiled array type including simple compression,
+//! 
+//! indices use VecN .x .y .z types : this is for clarity
+//! alongside code that uses array indices for acessing collections and tuple accessors for datastructures/multiple-return values.
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -70,11 +80,12 @@ mod tests {
 
 }
 
+/// A Tiled 3d array with simple runtime-useable compression
 pub mod tiled;
 pub use tiled::*;
 pub type Idx=i32;
 use std::ops::Range;
-use std::ops::{Add,Sub,Mul,Div,Rem,BitOr,BitAnd,BitXor,Index,IndexMut};
+use std::ops::{Add,Sub,Mul,Div,Rem,BitOr,BitAnd,BitXor,Index,IndexMut,Shl,Shr,AddAssign,SubAssign,MulAssign,DivAssign};
 use std::cmp::PartialEq;
 extern crate lininterp;
 extern crate vec_xyzw;
@@ -93,6 +104,7 @@ fn div_rem(a:usize,b:usize)->(usize,usize){
 
 pub use vec_xyzw::{Vec2,Vec3,Vec4};
 //pub struct Vec4<X,Y=X,Z=Y,W=Z>{pub x:X,pub y:Y,pub z:Z,pub w:W} // array3d::Vec3 should 'into()' into vector::Vec3 , etc.
+/// 2d index type allowing use of .x .y for clarity, compared to using arrays for indices and the collection itself, or tuples
 pub type V2i=Vec2<Idx>;
 pub type V3i=Vec3<Idx>;
 pub type V4i=Vec4<Idx>;//TODO
@@ -128,14 +140,30 @@ pub fn v3i(x:i32,y:i32,z:i32)->V3i{Vec3{x:x,y:y,z:z}}
 pub fn v3izero()->V3i{v3i(0,0,0)}
 pub fn v3ione()->V3i{v3i(1,1,1)}
 pub fn v3iadd_axis(a:V3i,axis:i32, value:i32)->V3i{let mut r=a; *r.get_mut(axis)+=value; r}
+
+pub fn v3f_index_fraction(pos:Vec3<f32>)->(V3i,Vec3<f32>){
+	assert!(pos.x>=0.0&&pos.y>=0.0&&pos.z>=0.0);
+//	let |f|{assert!(f>=0.0);if f<0.0{(f.ceil(),1.0-f.fract())}else{(f.floor(),f.fract())}}; 
+	// todo-vectorizable .. indices processed in simd reg.
+	let ipos=v3i(pos.x.floor() as i32,pos.y.floor() as i32,pos.z.floor() as i32);
+	let fpos=Vec3{x:pos.x.fract(),y:pos.y.fract(),z:pos.z.fract()};
+
+	(ipos,fpos)	
+}
+
+/// Stores neighbours in one axis for a cell
 #[derive(Debug,Copy,Clone)]
 pub struct Neighbours<T>{pub prev:T,pub next:T}
-type Neighbours2d<T>=Vec2<Neighbours<T>>;
-type Neighbours3d<T>=Vec3<Neighbours<T>>;
-type Neighbours4d<T>=Vec4<Neighbours<T>>;
+/// neighbours for a 2d array cell
+pub type Neighbours2d<T>=Vec2<Neighbours<T>>;
+/// neighbours for a 3d array cell
+pub type Neighbours3d<T>=Vec3<Neighbours<T>>;
+/// neighbours for a 4d array cell
+pub type Neighbours4d<T>=Vec4<Neighbours<T>>;
 
-macro_rules! v3i_operators{[$(($fname:ident=>$op:ident)),*]=>{
+macro_rules! v3i_operators{[$(($fname:ident,$fname_s:ident=>$op:ident)),*]=>{
 	$(pub fn $fname(a:V3i,b:V3i)->V3i{v3i(a.x.$op(b.x),a.y.$op(b.y),a.z.$op(b.z))})*
+	$(pub fn $fname_s(a:V3i,s:i32)->V3i{v3i(a.x.$op(s),a.y.$op(s),a.z.$op(s))})*
 }}
 macro_rules! v3i_permute_v2i{[$($pname:ident($u:ident,$v:ident)),*]=>{
 	$(pub fn $pname(a:V3i)->V2i{v2i(a.$u,a.$v)})*
@@ -147,16 +175,11 @@ pub trait MyMod :Add+Sub+Div+Mul+Sized{
 impl MyMod for i32{
 	fn mymod(&self,b:Self)->Self{ if *self>=0{*self%b}else{ b-((-*self) %b)} }
 }
-v3i_operators![(v3iadd=>add),(v3isub=>sub),(v3imul=>mul),(v3idiv=>div),(v3irem=>rem),(v3imin=>min),(v3imax=>max),(v3imymod=>mymod)];
+v3i_operators![(v3iadd,v3iadd_s=>add),(v3isub,v3isub_s=>sub),(v3imul,v3imul_s=>mul),(v3idiv,v3idiv_s=>div),(v3irem,v3irem_s=>rem),(v3imin,v3imin_s=>min),(v3imax,v3imax_s=>max),(v3iand,v3iand_s=>bitand),(v3ior,v3ior_s=>bitor),(v3ixor,v3ixor_s=>bitxor),(v3imymod,v3imymod_s=>mymod),(v3ishl,v3ishl_s=>shl),(v3ishr,v3ishr_s=>shr)];
 v3i_permute_v2i![v3i_xy(x,y), v3i_yz(y,z), v3i_xz(x,z)];
 
-pub fn v3imuls(a:V3i,s:i32)->V3i{v3i(a.x*s,a.y*s,a.z*s)}
-pub fn v3idivs(a:V3i,s:i32)->V3i{v3i(a.x/s,a.y/s,a.z/s)}
-pub fn v3iands(a:V3i,s:i32)->V3i{v3i(a.x&s,a.y&s,a.z&s)}
-pub fn v3ishrs(a:V3i,s:i32)->V3i{v3i(a.x>>s,a.y>>s,a.z>>s)}
-pub fn v3ishls(a:V3i,s:i32)->V3i{v3i(a.x<<s,a.y<<s,a.z<<s)}
 pub fn v3itilepos(a:V3i,tile_shift:i32)->(V3i,V3i){
-	(v3ishrs(a,tile_shift),v3iands(a,(1<<tile_shift)-1))
+	(v3ishr_s(a,tile_shift),v3iand_s(a,(1<<tile_shift)-1))
 }
 
 pub fn v3i_hmul_usize(a:V3i)->usize{ a.x as usize*a.y as usize *a.z as usize}
@@ -164,19 +187,32 @@ pub fn v2i_hmul_usize(a:V2i)->usize{ a.x as usize*a.y as usize}
 pub fn v2i_hadd_usize(a:V2i)->usize{ a.x as usize+a.y as usize}
 pub fn v3i_hadd_usize(a:V3i)->usize{ a.x as usize+a.y as usize +a.z as usize}
 
+/// Flat 2d array, stored linearly in a single Vec<T>
 pub struct Array2d<T>{pub shape:V2i,pub data:Vec<T>}
+/// Flat 3d array, stored linearly in a single Vec<T>
 pub struct Array3d<T>{pub shape:V3i,pub data:Vec<T>}
+/// Flat 4d array, stored linearly in a single Vec<T>
 pub struct Array4d<T>{pub shape:V4i,pub data:Vec<T>}
 
 fn eval_linear_index(pos:V3i, stride:V3i)->usize{
 	(pos.x as usize)*(stride.x as usize)+(pos.y as usize) * (stride.y as usize) + (pos.z as usize)*(stride.z as usize)
 }
 
+/// repesents a slice of the array with Z,Y axes specified, i.e. a range of X
+pub struct SliceZY<'a,TS:'a>{
+	pub z:i32,
+	pub y:i32,
+	pub base_index:i32,	//precomputed linear index for x=0,y=0,z=given value
+	pub array:&'a TS
+}
 
-/// utility trait: types which can convert XYZ<->linear indices
+/// Utility trait: any collections which are indexable by XYZ
 pub trait XYZIndexable : IndexMut<V3i>{
 	fn index_size(&self)->V3i;
 }
+
+
+/// utility trait: any collections which can convert between XYZ and single linear indices. Will allow more efficient impls of traversals
 pub trait XYZLinearIndexable : XYZIndexable{
 	fn linear_index(&self,pos:V3i)->LinearIndex;
 	fn pos_from_linear_index(&self,LinearIndex)->V3i;	
@@ -207,11 +243,22 @@ impl<T:Clone> Array2d<T>{
 		}}
 		r
 	}
+
 	pub fn from_fn<F:Fn(V2i)->T> (s:V2i, f:F)->Array2d<T>{
 		let mut d=Array2d{shape:s,data:Vec::new()};
 		d.data.reserve(s.x as usize * s.y as usize);
 		for y in 0..s.y{ for x in 0..s.x{
 				d.data.push(f(v2i(x,y)))
+			}
+		}
+		d
+	}
+	pub fn from_fn_linear_indexed<F:Fn(V2i,LinearIndex)->T> (s:V2i, f:F)->Array2d<T>{
+		let mut d=Array2d{shape:s,data:Vec::new()};
+		d.data.reserve(s.x as usize * s.y as usize);
+		let mut i=0;
+		for y in 0..s.y{ for x in 0..s.x{
+				d.data.push(f(v2i(x,y),i)); i+=1;
 			}
 		}
 		d
@@ -234,6 +281,7 @@ impl<T:Clone> IndexMut<V2i> for Array2d<T>{
 	}
 }
 
+/// Helper for iterations storing index range and some precomputed linear indices
 pub struct IterXYZRange {
 	start:V3i,
 	end:V3i,
@@ -251,13 +299,15 @@ pub struct IterXYZState{
 	pos:V3i,
 	linear_index:LinearIndex,	// array index
 }
-/// Iterator over 3d index positions and associated linear index computed from strides
+/// Iterator over 3d index positions,maintaining an associated linear index computed from strides
 pub struct IterXYZ {
 	state:IterXYZState,
 	range:IterXYZRange
 }
+/// for output of <IterXYZ as Iterator> - 3d index and associated linear index
 pub type IterXYZItem=(V3i,usize);
-fn step_xyz_iter(s:&mut IterXYZState,range:&IterXYZRange)->Option<IterXYZItem>{
+/// helper function: perform a step of XYZ range iteration - updates an IterXYZState, assuming it's controlled by the given range.
+pub fn step_xyz_iter(s:&mut IterXYZState,range:&IterXYZRange)->Option<IterXYZItem>{
 // todo - evaluate 'INDEX'incrementally, thats the point!
 	if s.pos.z>=range.end.z {return None;}
 	let ret=(s.pos,s.linear_index);
@@ -274,6 +324,7 @@ fn step_xyz_iter(s:&mut IterXYZState,range:&IterXYZRange)->Option<IterXYZItem>{
 	}
 	Some(ret)
 }
+/// Part of external iterator for XYZ values - contains the unchanging description of the whole iteration
 impl IterXYZRange{
 	fn eval_linear_index(&self,pos:V3i)->usize{
 		(pos.x as usize*self.li_stride.x as usize)+
@@ -282,6 +333,7 @@ impl IterXYZRange{
 		self.li_base
 	}
 }
+
 impl Iterator for IterXYZ{
 	type Item=IterXYZItem;
 	fn next(&mut self)->Option<Self::Item>{
@@ -289,8 +341,8 @@ impl Iterator for IterXYZ{
 	}
 }
 
-/// region of array3d, analogous to array slices.
-/// 'TS'=collecton of T
+/// range-bounded Region of array3d, analogous to array slices.
+/// 'TS' type-param =collecton of T's, T used for Items
 pub struct RangeOf<'a,I,TS:'a+Index<I>>(Range<I>, &'a TS );
 pub struct RangeOfMut<'a,I,TS:'a+IndexMut<I>+Index<I>>(Range<I>, &'a mut TS );
 
@@ -386,17 +438,17 @@ impl<'a,A:IterXYZAble<'a>> Iterator for IterXYZInMut<'a,A>{
 */
 
 impl<T:Clone> Array3d<T>{
-	/// consume a vec to build
+	/// consume a vec to build. opposite of to_vec
 	fn from_vec(size:V3i,v:Vec<T>)->Self{
 		assert!((size.x*size.y*size.z) as usize==v.len());
 		Array3d{shape:size,data:v}
 	}
-	/// destructure
+	/// destructure into the shape and flat array seperately; inverse of from_vec
 	fn to_vec(self)->(V3i,Vec<T>){
 		(self.shape,self.data)
 	}
 	/// get a region, TODO can this be made to 
-	/// work with rust's nifty array syntax?
+	/// work with rust's nifty array syntax? Index<.> seems to require returning &Output, which precludes returning a wrapper helper-strucure
 	fn range<'a>(&'a self, rng:Range<V3i>)->RangeOf<'a,V3i,Self>{
 		RangeOf(rng,self)		
 	}
@@ -436,14 +488,21 @@ impl<'a, T:Clone+'a> Iterator for Array3dIterMut<'a,T> {
 */
 
 impl<T:Clone> Array3d<T>{// TODO is there an 'iterable' trait?
+	/// dummy implementation; prefer 'iter_cells', (but may have the ability to iterate sliceZ->ZY->XYZ eventually)
+	fn iter(&self){unimplemented!("see iter_cells() instead")}
+	/// iterate through the entire 3d array, passing the cell reference along with it's 3d index; like a 3d version of iter().enumerate()
 	fn iter_cells<'a>(&'a self)->Array3dIter<'a,T>{
 		Array3dIter(self, IterXYZ::new(v3i(0,0,0),self.shape, 0 , self.linear_stride()))
 	}
+	/// mutable version of iter_cells
 	fn iter_cells_mut<'a>(&'a mut self)->Array3dIterMut<'a,T>{
 		let shp=self.shape.clone();
 		let strd=self.linear_stride();
 		Array3dIterMut(self, IterXYZ::new(v3i(0,0,0),shp, 0 , strd))
 	}
+	/// compute the index scales of x/y/z respectively
+	/// x-stride assumed not necaserily one, to allow
+	/// swizzled/strided views etc.
 	fn linear_stride(&self)->V3i{v3i(1,self.shape.x,self.shape.x*self.shape.y)}
 }
 
@@ -466,21 +525,34 @@ impl<T> XYZLinearIndexable for Array3d<T>{
 	}
 }
 
-impl<'a,T:Clone> IterXYZAble<'a> for Array3d<T>{
+impl<'a,T> IterXYZAble<'a> for Array3d<T>{
 	type Elem=T;
 	fn at_linear_index(&'a self,i:LinearIndex)->&'a T{ self.data.index(i)}
 }
-impl<'a,T:Clone> IterXYZAbleMut<'a> for Array3d<T>{
+impl<'a,T> IterXYZAbleMut<'a> for Array3d<T>{
 	fn at_linear_index_mut(&'a mut self,i:LinearIndex)->&'a mut T{ self.data.index_mut(i)}
 }
 
 impl<T:Clone> Array3d<T>{
-	
+
+	/// produce an array from a function applied to cell indices	
 	pub fn from_fn<F:Fn(V3i)->T> (s:V3i,f:F) -> Array3d<T> {
 		let mut a=Array3d{shape:s, data:Vec::new()};
 		a.data.reserve(v3i_hmul_usize(s));
 		for z in 0..a.shape.z{ for y in 0..a.shape.y { for x in 0.. a.shape.x{
 			a.data.push( f(v3i(x,y,z)) )
+		}}}
+		a
+	}
+
+	/// produce an array from a function applied to cell indices, with the linear index available
+	pub fn from_fn_linear_indexed<F:Fn(V3i,i32)->T> (s:V3i,f:F) -> Array3d<T> {
+		let mut a=Array3d{shape:s, data:Vec::new()};
+		a.data.reserve(v3i_hmul_usize(s));
+		let mut i=0;
+		for z in 0..a.shape.z{ for y in 0..a.shape.y { for x in 0.. a.shape.x{
+			a.data.push( f(v3i(x,y,z),i) );
+			i+=1;
 		}}}
 		a
 	}
@@ -542,16 +614,39 @@ macro_rules! fold_axis{(fn $fname:ident traverse ($u:ident,$v:ident) reduce $w:i
 	}
 }}
 
+impl<T:lininterp::Lerp+Clone> Array3d<T>{
+	/// perform trilinear sampled read of cell data
+	/// assumes the fracitional part is the interpolant
+	fn trilinear_sample(&self,pos:Vec3<f32>)->T{
+		assert!(pos.x>=0.0 && pos.y>=0.0 && pos.z>=0.0,"negative values not handled yet");
+		let (ipos,fpos)=v3f_index_fraction(pos);
+		lininterp::trilerp(&self.get2x2x2(ipos),(fpos.x,fpos.y,fpos.z))
+	}
+}
 
-/// internal iterators
+/// Internal iterators, and some associated helper functions
 /// until rust has HKT/ATOC, options for output are limited,
 /// we keep flat Array3d as the default output
-/// Default implementations just built on indexing, however addressgen would
-/// be inefficient this way
-/// implementation for specific arrangements could implement certain
+/// Default implementations are just built on indexing; 
+/// however cell address-generation will be inefficient this way
+/// Implementation for specific arrangements could implement certain
 /// traversals more efficiently (be it flat, morton order, whatever)
+/// TODO - try to re-arrange around a 'scanline' (X-slice) helper object to at least get reasonably efficient Flat array use out of the default impl.
 pub trait XYZInternalIterators : XYZIndexable{
-	type T=Self::Output;
+	// TODO - looks gross using Self::Output instead of 'T' as per impls,
+	// is there a way to make a local alias? always seems to need 'Self::..'
+	// output is 'Elem' , happens to come from Index<T> .
+	// causes confusion with *output* for individual functions here.
+	/// get a 2x2x2 region of the array-adjacent values eg for filtering/convolution
+	fn get2x2x2(&self,pos:V3i)->[[[&Self::Output;2];2];2]{
+		[self.get2x2(pos),self.get2x2(v3iadd(pos,v3i(0,0,1)))]
+	}
+	fn get2(&self,pos:V3i)->[&Self::Output;2]{
+		[self.index(pos),self.index(v3iadd(pos,v3i(1,0,0)))]
+	}
+	fn get2x2(&self,pos:V3i)->[[&Self::Output;2];2]{
+		[self.get2(pos),self.get2(v3iadd(pos,v3i(0,1,0)))]
+	}
 
 	fn map_strided_region<B:Clone,F:Fn(V3i,&Self::Output)->B> 
 		(&self,range:Range<V3i>,stride:V3i, f:F) -> Array3d<B>
@@ -564,12 +659,20 @@ pub trait XYZInternalIterators : XYZIndexable{
 		)
 	}
 
-	/// internal iteration with inplace mutation
+	/// zip_with - apply a function to corresponding elements from a pair of arrays to produce a new array of the results
+	fn zip_with<B,R,F>(&self,other:&B,f:F)->Array3d<R>
+		where B:XYZInternalIterators, F:Fn(V3i, &Self::Output, &B::Output)->R, R:Clone {
+		assert!(self.index_size()==other.index_size());
+		Array3d::from_fn(self.index_size(), |pos:V3i|f(pos,self.index(pos),other.index(pos)))
+//		Array3d::from_fn_linear_indexed(self.index_size(), |pos:V3i,i:i32|f(self.at_linear_index[i],other.at_linear_index[i]) })
+	}
+
+	/// produce a new array by applying a function to each element
 	fn map_xyz<B:Clone,F:Fn(V3i,&Self::Output)->B> (&self,f:F) -> Array3d<B>{
 		Array3d::from_fn(self.index_size(),
-			|pos:V3i|f(pos,self.index(pos))
-		)
+			|pos:V3i|f(pos,self.index(pos)))
 	}
+	/// internal iteration with inplace mutation
 	fn for_each<F>(&mut self,f:F) 
 		where F:Fn(V3i,&mut Self::Output)
 	{
@@ -642,8 +745,11 @@ pub trait XYZInternalIterators : XYZIndexable{
 		out
 	}
 */
+	/// fold values along the x axis, producing a 2d array corresponding to yz
 	fold_axis!{fn fold_x traverse (y,z) reduce x}
+	/// fold values along the y axis, producing a 2d array corresponding to xz
 	fold_axis!{fn fold_y traverse (x,z) reduce y}
+	/// fold values along the z axis, producing a 2d array corresponding to xy
 	fold_axis!{fn fold_z traverse (x,y) reduce z}
 /*
 	/// produce a 2d array by folding along the X axis
@@ -665,7 +771,7 @@ pub trait XYZInternalIterators : XYZIndexable{
 		out		
 	}
 */
-	/// fold values along x,y,z in turn without intermediate storage
+	/// fold values along z,y,x axes to a single result without intermediate storage
 	fn fold_xyz<A,B,C,FOLDX,FOLDY,FOLDZ>(
 		&self,
 		ifx:(A,FOLDX), ify:(B,FOLDY), ifz:(C,FOLDZ)
@@ -695,7 +801,7 @@ pub trait XYZInternalIterators : XYZIndexable{
 		}
 		ax
 	}
-	/// fold values along z,y,x in turn without intermediate storage
+	/// fold values along x,y,z in turn without intermediate storage
 	fn fold_zyx<A,B,C,FOLDX,FOLDY,FOLDZ>(
 		&self,
 		ifx:(A,FOLDX), ify:(B,FOLDY), ifz:(C,FOLDZ)
@@ -933,8 +1039,56 @@ impl<T> IndexMut<V3i> for Array3d<T>{
  	}
 }
 
+// implementing numeric operators
+macro_rules! impl_binary_operators{[$(($traitname:ident,$opname:ident)),*]=>{
+$(
 
+	impl<'a,'b,A:Copy,B:Copy,R> $traitname<&'b Array3d<B>> for &'a Array3d<A> where A:$traitname<&'b B,Output=R>+'a, R:Clone{
+		type Output=Array3d<R >;
+		fn $opname(self,rhs:&'b Array3d<B>)->Self::Output{
+			// todo -implement using 'zip_with', then specialize 'InternalIterators' for LinearIndexed
+			assert!(self.index_size()==rhs.index_size());
+			// todo - look into paired iterators 
+			let mut out=Vec::new(); out.reserve(self.data.len());
+			for x in 0..self.data.len(){
+				out.push(self.at_linear_index(x).$opname(rhs.at_linear_index(x)))
+			}
+			Array3d::from_vec(self.index_size(),out)
+		}
+	}
+)*
+}}
 
+//[$(($fname:ident,$fname_s:ident=>$op:ident)),*]
+macro_rules! impl_assign_operators{[$(($traitname:ident,$opname:ident)),*]=>{$(
 
+	impl<'a,'b,'d,'e,'f,'g,'arb, A,B:Copy> $traitname<&'arb Array3d<B>> for Array3d<A> where A:$traitname<B>,B:'e, Self:'f, &'g B:'g{
+		fn $opname(&mut self,rhs:&'arb Array3d<B>){
+			assert!(self.index_size()==rhs.index_size());
+			// todo - look into paired iterators 
+			for x in 0..self.data.len(){
+				let rhsd=rhs.data.index(x);
+				self.data[x].$opname(*rhsd);
+			}
+		}
+	}
 
+)*}}
 
+impl_assign_operators!{(AddAssign,add_assign),(SubAssign,sub_assign),(MulAssign,mul_assign),(DivAssign,div_assign)}
+
+impl_binary_operators!{(Add,add),(Sub,sub),(Mul,mul),(Div,div),(Shl,shl),(Shr,shr),(Rem,rem),(BitAnd,bitand),(BitXor,bitxor),(BitOr,bitor)}
+
+//partialeq doesn't fit the pattern, must impl manually
+impl<'a,'b,'c,'d,A,B> PartialEq<Array3d<B>> for Array3d<A> where A:PartialEq<B>+'a,B:'b{
+	fn eq(&self,other:&Array3d<B>)->bool{
+		
+		assert!(self.index_size()==other.index_size());
+		for x in 0..self.data.len(){
+			if self.at_linear_index(x)!=other.at_linear_index(x){
+				return false;
+			}
+		}
+		return true;
+	}
+}
