@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 #![feature(slice_get_slice)]
 #![feature(associated_type_defaults)]
+#![feature(concat_idents)]
 
 //! 2d,3d (TODO-4d) Array types,
 //! helper functions for internal&external iterators
@@ -104,9 +105,11 @@ fn div_rem(a:usize,b:usize)->(usize,usize){
 
 pub use vec_xyzw::{Vec2,Vec3,Vec4};
 //pub struct Vec4<X,Y=X,Z=Y,W=Z>{pub x:X,pub y:Y,pub z:Z,pub w:W} // array3d::Vec3 should 'into()' into vector::Vec3 , etc.
-/// 2d index type allowing use of .x .y for clarity, compared to using arrays for indices and the collection itself, or tuples
+/// 2d index type allowing use of .x .y for clarity, compared to using arrays for indices and the collection itself, or tuples. 'i'=32bit signed integer
 pub type V2i=Vec2<Idx>;
+/// 3d index type allowing use of .x .y,.z for clarity, compared to using arrays for indices and the collection itself, or tuples. 'i'=32bit signed integer
 pub type V3i=Vec3<Idx>;
+/// 4d index type allowing use of .x .y,.z,.w for clarity, compared to using arrays for indices and the collection itself, or tuples. 'i'=32bit signed integer
 pub type V4i=Vec4<Idx>;//TODO
 type Axis_t=i32;
 
@@ -161,10 +164,14 @@ pub type Neighbours3d<T>=Vec3<Neighbours<T>>;
 /// neighbours for a 4d array cell
 pub type Neighbours4d<T>=Vec4<Neighbours<T>>;
 
-macro_rules! v3i_operators{[$(($fname:ident,$fname_s:ident=>$op:ident)),*]=>{
-	$(pub fn $fname(a:V3i,b:V3i)->V3i{v3i(a.x.$op(b.x),a.y.$op(b.y),a.z.$op(b.z))})*
-	$(pub fn $fname_s(a:V3i,s:i32)->V3i{v3i(a.x.$op(s),a.y.$op(s),a.z.$op(s))})*
+/// Roll the helper functions for a vector type - apply per-element function to 2 vectors, 1vector and a scalar broadcast, or 1 vector and a scalar per elem
+macro_rules! impl_vector_functions{[vector_type:$vtype:ty,element_type:$elemt:ty,vector_constructor:$vcons:ident=>$(($fname:ident,$fname_s:ident,$fname_xyz:ident=>$op:ident)),*]=>{
+	$(pub fn $fname(src1:$vtype, src2:$vtype)->$vtype{$vcons( src1.x.$op(src2.x),src1.y.$op(src2.y),src1.z.$op(src2.z)  )})*
+	$(pub fn $fname_s(src1:$vtype, s:$elemt)->$vtype{$vcons(src1.x.$op(s),src1.y.$op(s),src1.z.$op(s))})*
+	$(pub fn $fname_xyz(src1:$vtype, x:$elemt, y:$elemt, z:$elemt)->$vtype{$vcons(src1.x.$op(x),src1.y.$op(y),src1.z.$op(z))})*
+
 }}
+
 macro_rules! v3i_permute_v2i{[$($pname:ident($u:ident,$v:ident)),*]=>{
 	$(pub fn $pname(a:V3i)->V2i{v2i(a.$u,a.$v)})*
 }}
@@ -175,7 +182,9 @@ pub trait MyMod :Add+Sub+Div+Mul+Sized{
 impl MyMod for i32{
 	fn mymod(&self,b:Self)->Self{ if *self>=0{*self%b}else{ b-((-*self) %b)} }
 }
-v3i_operators![(v3iadd,v3iadd_s=>add),(v3isub,v3isub_s=>sub),(v3imul,v3imul_s=>mul),(v3idiv,v3idiv_s=>div),(v3irem,v3irem_s=>rem),(v3imin,v3imin_s=>min),(v3imax,v3imax_s=>max),(v3iand,v3iand_s=>bitand),(v3ior,v3ior_s=>bitor),(v3ixor,v3ixor_s=>bitxor),(v3imymod,v3imymod_s=>mymod),(v3ishl,v3ishl_s=>shl),(v3ishr,v3ishr_s=>shr)];
+
+impl_vector_functions![vector_type:V3i,element_type:i32,vector_constructor:v3i=>(v3iadd,v3iadd_s,v3iadd_xyz=>add),(v3isub,v3isub_s,v3isub_xyz=>sub),(v3imul,v3imul_s,v3imul_xyz=>mul),(v3idiv,v3idiv_s,v3idiv_xyz=>div),(v3irem,v3irem_s,v3irem_xyz=>rem),(v3imin,v3imin_s,v3imin_xyz=>min),(v3imax,v3imax_s,v3imax_xyz=>max),(v3iand,v3iand_s,v3iand_xyz=>bitand),(v3ior,v3ior_s,v3ior_xyz=>bitor),(v3ixor,v3ixor_s,v3ixor_xyz=>bitxor),(v3imymod,v3imymod_s,v3imymod_xyz=>mymod),(v3ishl,v3ishl_s,v3ishl_xyz=>shl),(v3ishr,v3ishr_s,v3ishr_xyz=>shr)];
+
 v3i_permute_v2i![v3i_xy(x,y), v3i_yz(y,z), v3i_xz(x,z)];
 
 pub fn v3itilepos(a:V3i,tile_shift:i32)->(V3i,V3i){
@@ -639,21 +648,21 @@ pub trait XYZInternalIterators : XYZIndexable{
 	// causes confusion with *output* for individual functions here.
 	/// get a 2x2x2 region of the array-adjacent values eg for filtering/convolution
 	fn get2x2x2(&self,pos:V3i)->[[[&Self::Output;2];2];2]{
-		[self.get2x2(pos),self.get2x2(v3iadd(pos,v3i(0,0,1)))]
+		[self.get2x2(pos),self.get2x2(pos+v3i(0,0,1))]
 	}
 	fn get2(&self,pos:V3i)->[&Self::Output;2]{
-		[self.index(pos),self.index(v3iadd(pos,v3i(1,0,0)))]
+		[self.index(pos),self.index(pos+v3i(1,0,0))]
 	}
 	fn get2x2(&self,pos:V3i)->[[&Self::Output;2];2]{
-		[self.get2(pos),self.get2(v3iadd(pos,v3i(0,1,0)))]
+		[self.get2(pos),self.get2(pos+v3i(0,1,0))]
 	}
 
 	fn map_strided_region<B:Clone,F:Fn(V3i,&Self::Output)->B> 
 		(&self,range:Range<V3i>,stride:V3i, f:F) -> Array3d<B>
 	{
-		Array3d::from_fn(v3idiv(v3isub(range.end,range.start),stride),
+		Array3d::from_fn((range.end-range.start)/stride,
 			|outpos:V3i|{
-				let inpos=v3iadd(v3imul(outpos,stride),range.start);
+				let inpos=v3iadd(outpos*stride,range.start);
 				f(inpos,self.index(inpos))
 			}
 		)
@@ -852,8 +861,9 @@ pub trait XYZInternalIterators : XYZIndexable{
 	fn fold_tiles<B,F>(&self,tilesize:V3i, input:B,f:&F)->Array3d<B>
 		where F:Fn(V3i,B,&Self::Output)->B,B:Clone
 	{
+		assert!(self.index_size()==(self.index_size()/tilesize)*tilesize);
 		self.map_strided(tilesize,
-			|pos,_:&Self::Output|{self.fold_region(pos..v3iadd(pos,tilesize),input.clone(),f)})
+			|pos,_:&Self::Output|{self.fold_region(pos..(pos+tilesize),input.clone(),f)})
 	}
 
 	/// subroutine for 'fold tiles', see context
@@ -876,9 +886,9 @@ pub trait XYZInternalIterators : XYZIndexable{
 	fn region_all(&self)->Range<V3i>{v3i(0,0,0)..self.index_size()}
 	fn map_region_strided<F,B>(&self,region:Range<V3i>,stride:V3i, f:F)->Array3d<B>
 		where F:Fn(V3i,&Self::Output)->B, B:Clone{
-		Array3d::from_fn(v3idiv(v3isub(region.end,region.start),stride),
+		Array3d::from_fn((region.end-region.start)/stride,
 			|outpos:V3i|{
-				let inpos=v3iadd(region.start,v3imul(outpos,stride));
+				let inpos=region.start+outpos*stride;
 				f(inpos,self.index(inpos))  
 			}
 		)
@@ -889,7 +899,7 @@ pub trait XYZInternalIterators : XYZIndexable{
 	}
 	fn map_region<F,B>(&self,region:Range<V3i>,f:F)->Array3d<B>
 		where F:Fn(V3i,&Self::Output)->B, B:Clone{
-		self.map_region_strided(region, v3ione(), f)
+		self.map_region_strided(region, v3i(1,1,1), f)
 	}
 	/// _X_     form of convolution  
 	/// XOX		passing each cell and it's
@@ -897,19 +907,19 @@ pub trait XYZInternalIterators : XYZIndexable{
 	fn convolute_neighbours<F,B>(&self,f:F)->Array3d<B>
 		where F:Fn(&Self::Output,Vec3<Neighbours<&Self::Output>>)->B ,B:Clone
 	{
-		self.map_region(v3ione()..v3isub(self.index_size(),v3ione()),
+		self.map_region(v3i(1,1,1)..(self.index_size()-v3i(1,1,1)),
 			|pos:V3i,current_cell:&Self::Output|{
 				f(	current_cell,
 					self::Vec3{
 						x:Neighbours{
-							prev:self.index(v3i(pos.x-1,pos.y,pos.z)),
-							next:self.index(v3i(pos.x+1,pos.y,pos.z))},
+							prev:self.index(pos+v3i(-1,0,0)),
+							next:self.index(pos+v3i(1,0,0)) },
 						y:Neighbours{
-							prev:self.index(v3i(pos.x,pos.y-1,pos.z)),
-							next:self.index(v3i(pos.x,pos.y+1,pos.z))},
+							prev:self.index(pos+v3i(0,-1,0)),
+							next:self.index(pos+v3i(0,1,0)) },
 						z:Neighbours{
-							prev:self.index(v3i(pos.x,pos.y,pos.z-1)),
-							next:self.index(v3i(pos.x,pos.y,pos.z+1))}})
+							prev:self.index(pos+v3i(0,0,-1)),
+							next:self.index(pos+v3i(0,0,1)) }})
 		})
 	}
 	fn index_wrap(&self,pos:V3i)->&Self::Output{self.get_wrap(pos)}
@@ -917,7 +927,7 @@ pub trait XYZInternalIterators : XYZIndexable{
 		self.index( v3imymod(pos, self.index_size()) )
 	}
 	fn get_ofs_wrap(&self,pos:V3i,dx:i32,dy:i32,dz:i32)->&Self::Output{
-		self.get_wrap(v3iadd(pos, v3i(dx,dy,dz)))
+		self.get_wrap(pos+ v3i(dx,dy,dz))
 	}
 	fn convolute_neighbours_wrap<F,B>(&self,f:F)->Array3d<B>
 		where F:Fn(&Self::Output,Vec3<Neighbours<&Self::Output>>)->B,B:Clone 
@@ -931,14 +941,14 @@ pub trait XYZInternalIterators : XYZIndexable{
 				f(	current_cell,
 					Vec3{
 						x:Neighbours{
-							prev:self.get_wrap(v3i(pos.x-1,pos.y,pos.z)),
-							next:self.get_wrap(v3i(pos.x+1,pos.y,pos.z))},
+							prev:self.get_wrap(pos+v3i(-1,0,0)),
+							next:self.get_wrap(pos+v3i(1,0,0))},
 						y:Neighbours{
-							prev:self.get_wrap(v3i(pos.x,pos.y-1,pos.z)),
-							next:self.get_wrap(v3i(pos.x,pos.y+1,pos.z))},
+							prev:self.get_wrap(pos+v3i(0,-1,0)),
+							next:self.get_wrap(pos+v3i(0,1,0))},
 						z:Neighbours{
-							prev:self.get_wrap(v3i(pos.x,pos.y,pos.z-1)),
-							next:self.get_wrap(v3i(pos.x,pos.y,pos.z+1))}})
+							prev:self.get_wrap(pos+v3i(0,0,-1)),
+							next:self.get_wrap(pos+v3i(0,0,1))}})
 		})
 	}
 	/// special case of convolution for 2x2 cells, e.g. for marching cubes
@@ -963,17 +973,9 @@ pub trait XYZInternalIterators : XYZIndexable{
 	fn fold_half_xyz<F,B>(&self,fold_fn:F)->Array3d<B>
 		where F:Fn(V3i,[[[&Self::Output;2];2];2])->B,B:Clone
 	{
-		Array3d::from_fn( v3idiv(self.index_size(),v3i(2,2,2)), |dpos:V3i|{
-			let spos=v3imul(dpos,v3i(2,2,2));
-			fold_fn(dpos,
-					[	[	[self.index(v3iadd(spos,v3i(0,0,0))),self.index(v3iadd(spos,v3i(1,0,0)))],
-							[self.index(v3iadd(spos,v3i(0,1,0))),self.index(v3iadd(spos,v3i(1,1,0)))]
-						],
-						[	[self.index(v3iadd(spos,v3i(0,0,0))),self.index(v3iadd(spos,v3i(1,0,0)))],
-							[self.index(v3iadd(spos,v3i(0,0,0))),self.index(v3iadd(spos,v3i(1,0,0)))]
-						]
-					]
-			)
+		Array3d::from_fn( self.index_size()/v3i(2,2,2), |dpos:V3i|{
+			let spos=dpos*v3i(2,2,2);
+			fold_fn(dpos, self.get2x2x2(spos))
 		})
 	}
 }
