@@ -635,14 +635,18 @@ impl<T:lininterp::Lerp+Clone> Array3d<T>{
 	}
 }
 
-/// Internal iterators, and some associated helper functions
-/// until rust has HKT/ATOC, options for output are limited,
-/// we keep flat Array3d as the default output
+/// Internal iterators, and some associated helper functions;
+///
+/// Until rust has HKT/ATOC, options for the output are limited:
+/// we just output a flat Array3d for the moment.
 /// Default implementations are just built on indexing; 
-/// however cell address-generation will be inefficient this way
+/// however cell address-generation will be inefficient this way.
+///
 /// Implementation for specific arrangements could implement certain
 /// traversals more efficiently (be it flat, morton order, whatever)
-/// TODO - try to re-arrange around a 'scanline' (X-slice) helper object to at least get reasonably efficient Flat array use out of the default impl.
+///
+/// TODO - try to re-arrange default around a 'scanline' (X-slice) helper object to at least get reasonably efficient Flat array use out of the default impl.
+/// TODO - data-parallel versions.
 pub trait XYZInternalIterators : XYZIndexable{
 	// TODO - looks gross using Self::Output instead of 'T' as per impls,
 	// is there a way to make a local alias? always seems to need 'Self::..'
