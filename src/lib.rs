@@ -7,13 +7,13 @@
 #![feature(associated_type_defaults)]
 #![feature(concat_idents)]
 
-//! 2d,3d (TODO-4d) Array types,
-//! helper functions for internal&external iterators
-//! this library focusses on internal iterators
-//! for clarity with future parallel version
-//! a Tiled array type including simple compression,
+//! 2D,3D Array types (TODO-4d);
 //! 
-//! indices use VecN .x .y .z types : this is for clarity
+//! Includes a Tiled array type with simple compression, and a simpler array stored flat in memory.
+//! 
+//! Gives functions for internal & external iterators.
+//! 
+//! Indices use VecN .x .y .z types : this is for clarity
 //! alongside code that uses array indices for acessing collections and tuple accessors for datastructures/multiple-return values.
 
 #[cfg(test)]
@@ -313,6 +313,7 @@ pub struct IterXYZ {
 	state:IterXYZState,
 	range:IterXYZRange
 }
+
 /// for output of <IterXYZ as Iterator> - 3d index and associated linear index
 pub type IterXYZItem=(V3i,usize);
 /// helper function: perform a step of XYZ range iteration - updates an IterXYZState, assuming it's controlled by the given range.
@@ -349,6 +350,7 @@ impl Iterator for IterXYZ{
 		step_xyz_iter(&mut self.state,&self.range)
 	}
 }
+
 
 /// range-bounded Region of array3d, analogous to array slices.
 /// 'TS' type-param =collecton of T's, T used for Items
