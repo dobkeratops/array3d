@@ -1,9 +1,9 @@
 use super::*;
 
 /// 4x4x4 cell Tile for simple compression:
-/// option of a single repeated value, or a real value
+/// Has option of a single repeated value, or a real value;
+///
 /// TODO - sparse content option
-/// fill with single value, single value + sparse, dense
 #[derive(Clone,Debug)]
 pub enum Tile4<T> {
 	Fill(T),Detail(Box<[[[T;4];4];4]>)
@@ -72,11 +72,12 @@ impl<T:Clone+PartialEq> Array3d<T>{
 		)
 	}
 }
-/// 3d array in 4x4x4 tiles, simple compression;
+/// 3d array composed of 4x4x4 tiles, with simple compression;
+///
 /// tiles contain either a single fill value or 4x4x4 individual values
-/// rationale: (not profiled yet)
-/// 4x4x4 is a sweetspot, more pointer overhead at 2x2x2 (might as well try octree) whilst 8x8x8 is too coarse.
-/// 64cells = 8x8 (commmon 2d tile size) or 4x4x4
+///
+/// rationale:
+/// 4x4x4 is a sweetspot; between pointer overhead and precision. 4x4x4 has 64cells, similar to the common 8x8 tile size in 2d.
 
 pub struct Array3dTiled4<T>(pub Array3d<Tile4<T>>);
 impl<'a,T:Clone+PartialEq+Default> From<&'a Array3d<T>> for Array3dTiled4<T>{
