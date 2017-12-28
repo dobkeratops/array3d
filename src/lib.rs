@@ -124,7 +124,7 @@ fn div_rem(a:usize,b:usize)->(usize,usize){
 //pub struct Vec3<X,Y=X,Z=Y>{pub x:X,pub y:Y,pub z:Z} // array3d::Vec3 should 'into()' into vector::Vec3 , etc.
 //#[derive(Copy,Debug,Clone)]
 
-pub use vec_xyzw::{Vec2,Vec3,Vec4};
+pub use vec_xyzw::{Vec2,Vec3,Vec4,VElem};
 pub use self::math::*;
 //pub struct Vec4<X,Y=X,Z=Y,W=Z>{pub x:X,pub y:Y,pub z:Z,pub w:W} // array3d::Vec3 should 'into()' into vector::Vec3 , etc.
 /// 2d index type allowing use of .x .y for clarity, compared to using arrays for indices and the collection itself, or tuples. 'i'=32bit signed integer
@@ -140,7 +140,7 @@ trait GetMut<I>{
 	fn get_mut(&mut self, i:I)->&mut Self::Output;
 }
 
-impl<T:Copy> GetMut<i32> for Vec3<T>{
+impl<T:VElem> GetMut<i32> for Vec3<T>{
 	type Output=T;
 	fn get_mut(&mut self, i:i32)->&mut T{
 		match i{
